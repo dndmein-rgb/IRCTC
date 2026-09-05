@@ -90,31 +90,54 @@ export const rotateRefreshToken = asyncHandler(async (req, res) => {
     throw new UnauthorizedError("Refresh token is missing", "LOGIN AGAIN");
   }
   const deviceId = getDeviceFingerprint(req);
-  const { newAccessToken, newRefreshToken} =await authService.rotateRefreshToken(refreshToken, deviceId);;
-    res.cookie(
-    "accessToken",
-    newAccessToken,
-    {
+  const { newAccessToken, newRefreshToken } =
+    await authService.rotateRefreshToken(refreshToken, deviceId);
+  res.cookie("accessToken", newAccessToken, {
+    httpOnly: true,
+    secure: true,
+    samesite: "strict",
+    maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+  });
+  res
+    .cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: true,
       samesite: "strict",
-      maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
-    },
-  );
-  res
-    .cookie(
-      "refreshToken",
-      newRefreshToken,
-      {
-        httpOnly: true,
-        secure: true,
-        samesite: "strict",
-        maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
-      },
-    )
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
     .status(200)
     .json({
       success: true,
       message: "Access and Refresh token reissued",
+    });
+});
+
+export const verifyGoogleToken = asyncHandler(async (req, res) => {
+  const { idToken } = req.body;
+  if (!idToken) {
+    throw new BadRequestError("Invalid Google ID Token", "INVALID_TOKEN");
+  }
+  const deviceId = getDeviceFingerprint(req);
+  const { accessToken, refreshToken, loggedInUser } =
+    await authService.verifyGoogleIdToken(idToken, deviceId);
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: true,
+    samesite: "strict",
+    maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+  });
+  res
+    .cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      samesite: "strict",
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "Logged in successfully",
+      loggedInUser,
     });
 });
