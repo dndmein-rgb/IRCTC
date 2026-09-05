@@ -1,5 +1,5 @@
 import cors from "cors"
-import { config } from "../config";
+import { config } from "../config/index.js";
 
 const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []
 

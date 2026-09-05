@@ -7,7 +7,7 @@ import helmet from "helmet";
 import { config } from "./config/index.js";
 import logger from "./config/logger.js";
 
-// import authRoutes from "./routes/auth.route.js";
+import authRoutes from "./routes/auth.route.js";
 // import userRoutes from "./routes/user.route.js";
 
 import { corsMiddleware } from "./middlewares/cors.middleware.js";
@@ -30,7 +30,7 @@ app.use(reqLogger);
 app.use(express.json());
 app.use(cookieParser());
 
-// app.use("/auth", authRoutes);
+app.use("/api/v1/auth", authRoutes);
 // app.use("/user", userRoutes);
 
 app.get("/", (req, res) => {
@@ -56,13 +56,13 @@ const startServer = async () => {
     const shutdown = async () => {
       logger.info("Shutting down gracefully...");
 
-      // server.close(async () => {
-      //   await disconnectProducer();
+      server.close(async () => {
+        // await disconnectProducer();
 
-      //   logger.info("Server closed");
+        logger.info("Server closed");
 
-      //   process.exit(0);
-      // });
+        process.exit(0);
+      });
     };
 
     process.on("SIGTERM", shutdown);

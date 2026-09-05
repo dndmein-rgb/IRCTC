@@ -1,76 +1,85 @@
 import Redis from "ioredis";
-import { config } from ".";
-import logger from "./logger";
+import { config } from "./index.js";
+import logger from "./logger.js";
 
 class RedisClient {
   static instance;
   static isConnected = false;
 
   constructor() {
-    // prevent direct instantiation
-    if (RedisClient.instance) {
-      throw new Error("Use RedisClient.getInstance() instead of new.");
-    }
+    // Prevent direct instantiation.
   }
 
   static getInstance() {
     if (!RedisClient.instance) {
       const redisUrl = config.REDIS_URL;
+
       if (!redisUrl) {
         throw new Error("REDIS_URL is not defined in the configuration.");
       }
+      console.log(
+        "REDIS_URL:",
+        redisUrl?.replace(/:[^:@]+@/, ":****@")
+      );
       RedisClient.instance = new Redis(redisUrl, {
         retryStrategy: (times) => {
-          const delay = Math.min(times * 50, 2000);
+          const delay = Math.min(times * 500, 5000);
+
+          logger.warn(
+            `Redis reconnect attempt ${times}. Retrying in ${delay}ms...`,
+          );
+
           return delay;
         },
+
         maxRetriesPerRequest: 3,
+
+        // Don't keep trying forever after an authentication failure.
+        enableReadyCheck: true,
       });
 
       RedisClient.setupEventListeners();
     }
+
     return RedisClient.instance;
   }
 
   static setupEventListeners() {
-    RedisClient.instance.on("connect", () => {
+    const client = RedisClient.instance;
+
+    if (!client) {
+      return;
+    }
+
+    client.on("connect", () => {
+      logger.info("Redis TCP connection established");
+    });
+
+    client.on("ready", () => {
       RedisClient.isConnected = true;
-      logger.info("Connected to Redis");
+      logger.info("Redis client is ready");
     });
 
-    RedisClient.instance.on("error", (error) => {
+    client.on("error", (error) => {
       RedisClient.isConnected = false;
-      logger.error("Redis connection error", error);
+
+      logger.error(`Redis connection error: ${error.message}`);
     });
 
-    RedisClient.instance.on("close", () => {
+    client.on("close", () => {
       RedisClient.isConnected = false;
       logger.warn("Redis connection closed");
     });
 
-    RedisClient.instance.on("reconnecting", () => {
+    client.on("reconnecting", () => {
+      RedisClient.isConnected = false;
       logger.warn("Reconnecting to Redis...");
     });
 
-    RedisClient.instance.on("ready", () => {
-      logger.info("Redis client is ready");
-    });
-
-    RedisClient.instance.on("end", () => {
+    client.on("end", () => {
       RedisClient.isConnected = false;
       logger.warn("Redis connection ended");
     });
-  }
-
-  static async closeConnection() {
-    if (RedisClient.instance) {
-      try {
-        await RedisClient.instance.quit();
-        logger.info("Redis connection closed");
-      } catch (error) {
-        logger.error("Error closing Redis connection: ", error);
-      }
-    }
   }
 
   static isReady() {
@@ -79,15 +88,56 @@ class RedisClient {
 
   static async testConnection() {
     try {
-      await RedisClient.instance.ping();
-      return true;
-    } catch (error) {
-      logger.error("Redis connection test failed: ", error);
+      const client = RedisClient.getInstance();
+
+      const response = await client.ping();
+
+      if (response === "PONG") {
+        logger.info("Redis ping successful");
+        return true;
+      }
+
       return false;
+    } catch (error) {
+      logger.error(
+        `Redis connection test failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      return false;
+    }
+  }
+
+  static async closeConnection() {
+    const client = RedisClient.instance;
+
+    if (!client) {
+      return;
+    }
+
+    try {
+      await client.quit();
+
+      RedisClient.instance = null;
+      RedisClient.isConnected = false;
+
+      logger.info("Redis connection closed gracefully");
+    } catch (error) {
+      logger.error(
+        `Error closing Redis connection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      client.disconnect();
+
+      RedisClient.instance = null;
+      RedisClient.isConnected = false;
     }
   }
 }
 
-// Export the singleton instance as default or named export
 export const redis = RedisClient.getInstance();
+
 export default RedisClient;

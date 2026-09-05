@@ -1,6 +1,6 @@
 import sgMail from '@sendgrid/mail';
 import 'dotenv/config';
-import { config } from '../config';
+import { config } from '../config/index.js';
 
 const apiKey = process.env.SENDGRID_API_KEY;
 
@@ -33,16 +33,16 @@ export async function sendOtpEmail(email, otp) {
     };
 
     try {
-        await sgMail.send(msg);
+      await sgMail.send(msg);
     } catch (error) {
-        console.error("Error sending OTP email:", error);
-        throw error;
+      console.dir(error, { depth: null });
+      throw error;
     }
 }
 
-export async function verifyOtpEmail(email) {
+export async function verifyOtpEmail(meta) {
     const msg = {
-        to: email,
+        to: meta.email,
         from: `${config.MAIL_SEND}`,
         subject: 'Email Verification Successful',
         html: `

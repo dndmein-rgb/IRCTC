@@ -1,8 +1,12 @@
-import { config } from "../config";
-import logger from "../config/logger";
-import { AppError } from "../utils/error";
+import logger from "../config/logger.js";
+import { AppError } from "../utils/error.js";
 
 export const errorHandler = (err, req, res, next) => {
+  console.error("\n========== ERROR ==========");
+  console.error("Message:", err?.message);
+  console.error("Stack:", err?.stack);
+  console.error("===========================\n");
+
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
       success: false,
@@ -10,18 +14,14 @@ export const errorHandler = (err, req, res, next) => {
       message: err.message,
     });
   }
-  console.error("UNHANDLED ERROR:", err);
 
-  if (config.NODE_ENV !== "production") {
-    logger.error({
-      message: err.message,
-      stack: err.stack,
-      path: req.path,
-      method: req.method,
-      body: req.body,
-      query: req.query,
-    });
-  }
+  logger.error({
+    message: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+    path: req.path,
+    method: req.method,
+  });
+
   return res.status(500).json({
     success: false,
     error: "SERVER_ERROR",
