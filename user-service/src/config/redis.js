@@ -17,10 +17,7 @@ class RedisClient {
       if (!redisUrl) {
         throw new Error("REDIS_URL is not defined in the configuration.");
       }
-      console.log(
-        "REDIS_URL:",
-        redisUrl?.replace(/:[^:@]+@/, ":****@")
-      );
+
       RedisClient.instance = new Redis(redisUrl, {
         retryStrategy: (times) => {
           const delay = Math.min(times * 500, 5000);

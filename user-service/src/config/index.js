@@ -1,4 +1,9 @@
-import packageJson from "../../package.json" with {type:"json"}
+import packageJson from "../../package.json" with { type: "json" };
+
+/**
+ * @typedef {import("jsonwebtoken").SignOptions["expiresIn"]} TokenExpiry
+ */
+
 const config = {
   SERVICE_NAME: packageJson.name,
 
@@ -13,16 +18,16 @@ const config = {
   KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
   ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
 
-  // Numeric configuration
   OTP_TTL: Number(process.env.OTP_TTL || 300),
+
   OTP_RATE_MAX_PER_HOUR: Number(
     process.env.OTP_RATE_MAX_PER_HOUR || 5
   ),
+
   OTP_MAX_VERIFY_ATTEMPTS: Number(
     process.env.OTP_MAX_VERIFY_ATTEMPTS || 5
   ),
 
-  // String configuration
   OTP_HMAC_SECRET:
     process.env.OTP_HMAC_SECRET ||
     "09dc0abbb2961391d822610b31b912e3231d4d2745c76b1ef4765af4c62f6079",
@@ -35,8 +40,13 @@ const config = {
     process.env.JWT_REFRESH_SECRET ||
     "826d2c0edb5ad8f8ac7668556c034ea228931a49576aefccc80d6f469cc4a34c4da82ca43a5c43de91ffdad2f4644c655e2eb3ccbb8bc2848cb64fe7ea2a1ab9",
 
-  ACCESS_TOKEN_EXP: process.env.ACCESS_TOKEN_EXP || "15m",
-  REFRESH_TOKEN_EXP: process.env.REFRESH_TOKEN_EXP || "7d",
+  ACCESS_TOKEN_EXP:
+    /** @type {TokenExpiry} */
+    (process.env.ACCESS_TOKEN_EXP || "15m"),
+
+  REFRESH_TOKEN_EXP:
+    /** @type {TokenExpiry} */
+    (process.env.REFRESH_TOKEN_EXP || "7d"),
 
   ACCESS_TOKEN_EXP_SEC: Number(
     process.env.ACCESS_TOKEN_EXP_SEC || 900
@@ -58,10 +68,6 @@ const config = {
 
   INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY,
 };
-
-// if (!config.GOOGLE_CLIENT_ID) {
-//   throw new Error("GOOGLE_CLIENT_ID environment variable is required");
-// }
 
 if (!config.SENDGRID_API_KEY) {
   throw new Error("SENDGRID_API_KEY missing");

@@ -1,7 +1,8 @@
 import { config } from "../config/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { BadRequestError } from "../utils/error.js";
+import { BadRequestError, UnauthorizedError } from "../utils/error.js";
 import * as authService from "../services/auth.service.js";
+import { getDeviceFingerprint } from "../utils/deviceFingerprint.js";
 
 export const sendOTP = asyncHandler(async (req, res) => {
   const { firstName, lastName, email, password, confirmPassword } = req.body;
@@ -47,4 +48,73 @@ export const verifyOTP = asyncHandler(async (req, res) => {
     message: "User Account created successfully",
     data: user,
   });
+});
+
+export const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    throw new BadRequestError("Email and Password are required");
+  }
+
+  const deviceId = getDeviceFingerprint(req);
+  const { accessToken, refreshToken, loggedInUser } = await authService.login(
+    email,
+    password,
+    deviceId,
+  );
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: true,
+    samesite: "strict",
+    maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+  });
+  res
+    .cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      samesite: "strict",
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "Logged in successfully",
+      loggedInUser,
+    });
+});
+
+export const rotateRefreshToken = asyncHandler(async (req, res) => {
+  const refreshToken = req.cookies.refreshToken;
+  if (!refreshToken) {
+    throw new UnauthorizedError("Refresh token is missing", "LOGIN AGAIN");
+  }
+  const deviceId = getDeviceFingerprint(req);
+  const { newAccessToken, newRefreshToken} =await authService.rotateRefreshToken(refreshToken, deviceId);;
+    res.cookie(
+    "accessToken",
+    newAccessToken,
+    {
+      httpOnly: true,
+      secure: true,
+      samesite: "strict",
+      maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+    },
+  );
+  res
+    .cookie(
+      "refreshToken",
+      newRefreshToken,
+      {
+        httpOnly: true,
+        secure: true,
+        samesite: "strict",
+        maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+      },
+    )
+    .status(200)
+    .json({
+      success: true,
+      message: "Access and Refresh token reissued",
+    });
 });
