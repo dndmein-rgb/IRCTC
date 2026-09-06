@@ -6,5 +6,5 @@
     "checkJs": true,
     "noImplicitAny": false
   },
-  "include": ["**/*.js", "../shared/constants/constants.js"]
+  "include": ["**/*.js"]
 }

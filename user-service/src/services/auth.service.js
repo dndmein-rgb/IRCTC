@@ -18,6 +18,7 @@ import jwt from "jsonwebtoken";
 import { redis } from "../config/redis.js";
 import { config } from "../config/index.js";
 import { OAuth2Client } from "google-auth-library";
+import { notificationProducer } from "../kafka/producer/notification.producer.js";
 
 const client = new OAuth2Client(config.GOOGLE_CLIENT_ID);
 
@@ -32,7 +33,7 @@ export const sendOTP = async (firstName, lastName, email, password) => {
   const hashedPassword = await bcrypt.hash(password, 12);
   const meta = { firstName, lastName, email, hashedPassword };
   const { otp, otpSessionId } = await generateAndStoreOtp(meta);
-  await sendOtpEmail(email, otp);
+  await notificationProducer.sendOtpEmail(email, otp)
   logger.info(`OTP email queued for : ${email}`);
   return { otpSessionId };
 };
@@ -51,7 +52,7 @@ export const verifyOTP = async (otp, otpSessionId) => {
       emailVerified: true,
     },
   });
-  await verifyOtpEmail(meta);
+  await notificationProducer.sendWelcomeEmail(meta.email, meta.firstName)
   return user;
 };
 
@@ -142,7 +143,7 @@ export const verifyGoogleIdToken = async (idToken,deviceId) => {
   };
 
   const user = await prisma.$transaction(async (tx) => {
-    let googleAuth = await tx.authprovider.findUnique({
+    let googleAuth = await tx.authProvider.findUnique({
       where: {
         provider_providerId: {
           provider: googleUser.provider,

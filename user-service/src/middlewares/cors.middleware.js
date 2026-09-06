@@ -6,7 +6,9 @@ const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(','
 export const corsMiddleware = cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true)
-    if (!allowedOrigins.includes(origin)) {
+    console.log("ALLOWED:", allowedOrigins);
+    console.log("REQUEST ORIGIN:", origin);
+    if (allowedOrigins.includes(origin)) {
       callback(null,true)
     } else {
       callback(new Error('Not allowed by CORS'));
