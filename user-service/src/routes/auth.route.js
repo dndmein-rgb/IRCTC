@@ -3,9 +3,9 @@ import {
   login,
   rotateRefreshToken,
   sendOTP,
+  verifyGoogleIdToken,
   verifyOTP,
 } from "../controllers/auth.controller.js";
-import { verifyGoogleIdToken } from "../services/auth.service.js";
 
 const router = express.Router();
 

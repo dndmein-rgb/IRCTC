@@ -66,14 +66,14 @@ export const login = asyncHandler(async (req, res) => {
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: true,
-    samesite: "strict",
+    sameSite: "strict",
     maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
   });
   res
     .cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: true,
-      samesite: "strict",
+      sameSite: "strict",
       maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
     })
     .status(200)
@@ -95,14 +95,14 @@ export const rotateRefreshToken = asyncHandler(async (req, res) => {
   res.cookie("accessToken", newAccessToken, {
     httpOnly: true,
     secure: true,
-    samesite: "strict",
+    sameSite: "strict",
     maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
   });
   res
     .cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: true,
-      samesite: "strict",
+      sameSite: "strict",
       maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
     })
     .status(200)
@@ -112,7 +112,7 @@ export const rotateRefreshToken = asyncHandler(async (req, res) => {
     });
 });
 
-export const verifyGoogleToken = asyncHandler(async (req, res) => {
+export const verifyGoogleIdToken = asyncHandler(async (req, res) => {
   const { idToken } = req.body;
   if (!idToken) {
     throw new BadRequestError("Invalid Google ID Token", "INVALID_TOKEN");
@@ -124,14 +124,14 @@ export const verifyGoogleToken = asyncHandler(async (req, res) => {
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: true,
-    samesite: "strict",
+    sameSite: "strict",
     maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
   });
   res
     .cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: true,
-      samesite: "strict",
+      sameSite: "strict",
       maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
     })
     .status(200)

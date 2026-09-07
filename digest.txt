@@ -1,49 +1,216 @@
 Directory structure:
-└── user-service/
-    ├── jsconfig.json
-    ├── package.json
-    ├── prisma7.config.ts
-    ├── skills-lock.json
-    ├── .env.example
-    ├── prisma/
-    │   ├── schema.prisma
-    │   └── migrations/
-    │       ├── migration_lock.toml
-    │       └── 20260904144739_init/
-    │           └── migration.sql
-    └── src/
-        ├── index.js
-        ├── config/
-        │   ├── index.js
-        │   ├── logger.js
-        │   ├── prisma.js
-        │   └── redis.js
-        ├── controllers/
-        │   └── auth.controller.js
-        ├── middlewares/
-        │   ├── auth.middleware.js
-        │   ├── cors.middleware.js
-        │   ├── error.middleware.js
-        │   └── req.middleware.js
-        ├── routes/
-        │   └── auth.route.js
-        ├── services/
-        │   └── auth.service.js
-        └── utils/
-            ├── asyncHandler.js
-            ├── auth.js
-            ├── deviceFingerprint.js
-            ├── email.js
-            ├── error.js
-            └── otp.js
+└── IRCTC/
+    ├── docker-compose.yaml
+    ├── notification-service/
+    │   ├── jsconfig.json
+    │   ├── package.json
+    │   ├── .env.example
+    │   └── src/
+    │       ├── index.js
+    │       ├── config/
+    │       │   ├── index.js
+    │       │   ├── kafka.js
+    │       │   └── logger.js
+    │       ├── kafka/
+    │       │   └── consumer/
+    │       │       └── email.consumer.js
+    │       ├── services/
+    │       │   └── email.service.js
+    │       └── templates/
+    │           └── index.js
+    ├── shared/
+    │   └── constants/
+    │       └── constants.js
+    └── user-service/
+        ├── jsconfig.json
+        ├── package.json
+        ├── prisma7.config.ts
+        ├── skills-lock.json
+        ├── .env.example
+        ├── prisma/
+        │   ├── schema.prisma
+        │   └── migrations/
+        │       ├── migration_lock.toml
+        │       └── 20260904144739_init/
+        │           └── migration.sql
+        └── src/
+            ├── index.js
+            ├── config/
+            │   ├── index.js
+            │   ├── kafka.js
+            │   ├── logger.js
+            │   ├── prisma.js
+            │   └── redis.js
+            ├── controllers/
+            │   └── auth.controller.js
+            ├── kafka/
+            │   └── producer/
+            │       └── notification.producer.js
+            ├── middlewares/
+            │   ├── auth.middleware.js
+            │   ├── cors.middleware.js
+            │   ├── error.middleware.js
+            │   └── req.middleware.js
+            ├── routes/
+            │   └── auth.route.js
+            ├── services/
+            │   └── auth.service.js
+            └── utils/
+                ├── asyncHandler.js
+                ├── auth.js
+                ├── deviceFingerprint.js
+                ├── email.js
+                ├── error.js
+                └── otp.js
 
 ================================================
-FILE: jsconfig.json
+FILE: docker-compose.yaml
+================================================
+name: irctc-backend
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: irctcpass
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - irctc-network
+  
+  pgadmin: 
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - postgres
+    networks:
+      - irctc-network
+
+  redis:
+    image: redis/redis-stack:6.2.6-v19
+    container_name: redis
+    restart: always
+    environment:
+      REDIS_ARGS: "--requirepass irctcpass"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - redis_data:/data
+    networks:
+      - irctc-network
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - irctc-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - irctc-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: always
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: irctc-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - irctc-network
+  
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+  #   container_name: elasticsearch
+  #   restart: always
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - ES_JAVA_OPTS=-Xms512m -Xmx512m
+  #   ports:
+  #     - "9200:9200"
+  #   volumes:
+  #     - es_data:/usr/share/elasticsearch/data
+  #   networks:
+  #     - irctc-network
+
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:8.12.0
+  #   container_name: kibana
+  #   restart: always
+  #   depends_on:
+  #     - elasticsearch
+  #   ports:
+  #     - "5601:5601"
+  #   environment:
+  #     ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  #   networks:
+  #     - irctc-network
+volumes:
+  postgres_data:
+  redis_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+  # es_data:
+
+networks:
+  irctc-network:
+    driver: bridge
+
+
+================================================
+FILE: notification-service/jsconfig.json
 ================================================
 {
   "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "target": "ES2022",
     "checkJs": true,
     "noImplicitAny": false
@@ -54,7 +221,813 @@ FILE: jsconfig.json
 
 
 ================================================
-FILE: package.json
+FILE: notification-service/package.json
+================================================
+{
+  "name": "notification-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "kafkajs": "^2.2.4",
+    "winston": "^3.19.0"
+  }
+}
+
+
+
+================================================
+FILE: notification-service/.env.example
+================================================
+PORT=4004
+LOG_LEVEL=info
+NODE_ENV=development
+ALLOWED_ORIGINS=http://localhost:4000,http://localhost:4001,http://localhost:4004
+KAFKA_BROKER=localhost:9093
+KAFKA_CLIENT_ID=notification-service
+SENDGRID_API_KEY=use_your_sendgrid_api_key
+MAIL_SEND=use_your_email_id
+FRONTEND_URL=http://localhost:3000/login
+
+
+================================================
+FILE: notification-service/src/index.js
+================================================
+import "dotenv/config"
+import { logger } from "./config/logger.js";
+import { emailConsumer } from "./kafka/consumer/email.consumer.js";
+
+process.on("unhandledRejection", (reason, promise) => {
+  logger.error("Unhandled Rejection", {
+    reason: reason instanceof Error ? reason.message : String(reason),
+    promise,
+  });
+
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught Exception", {
+    error: error.message,
+    stack: error.stack,
+  });
+
+  process.exit(1);
+});
+
+async function startNotificationService() {
+  try {
+    logger.info("Starting Notification Service...");
+
+    const requiredEnvVars = [
+      "SENDGRID_API_KEY",
+      "MAIL_SEND",
+      "KAFKA_BROKER",
+    ];
+
+    const missing = requiredEnvVars.filter(
+      (varName) => !process.env[varName],
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing required environment variables: ${missing.join(", ")}`,
+      );
+    }
+
+    await emailConsumer.start();
+
+    logger.info("Notification Service started successfully");
+    logger.info("Service is ready to process notifications");
+  } catch (error) {
+    console.error("STARTUP ERROR:", error);
+
+    logger.error("Failed to start Notification Service", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    process.exit(1);
+  }
+}
+
+startNotificationService();
+
+
+================================================
+FILE: notification-service/src/config/index.js
+================================================
+import packageJson from "../../package.json" with { type: "json" };
+
+export const config = {
+     SERVICE_NAME: packageJson.name,
+     PORT: Number(process.env.PORT) || 4004,
+     NODE_ENV: process.env.NODE_ENV || "development",
+     LOG_LEVEL: process.env.LOG_LEVEL || "info",
+     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+     SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+     KAFKA_BROKER: process.env.KAFKA_BROKER,
+     KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
+     MAIL_SEND: process.env.MAIL_SEND,
+     FRONTEND_URL: process.env.FRONTEND_URL
+}
+
+
+================================================
+FILE: notification-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs";
+import {logger} from "./logger.js";
+import { config } from "./index.js";
+
+export const kafka = new Kafka({
+     clientId: config.KAFKA_CLIENT_ID,
+     brokers: [config.KAFKA_BROKER || 'localhost:9093'],
+  logLevel: logLevel.ERROR,
+      requestTimeout: 30_000,
+     retry: {
+          initialRetryTime: 300,
+          retries: 10,
+          maxRetryTime: 30000,
+          multiplier: 2,
+     },
+});
+
+export const consumer = kafka.consumer({
+     groupId: 'notification-service-group',
+     sessionTimeout: 30000,
+     heartbeatInterval: 3000,
+});
+
+// Producer (used only for DLQ publishing)
+export const producer = kafka.producer({
+     allowAutoTopicCreation: true,
+     retry: { retries: 3 },
+});
+
+let isProducerConnected = false;
+
+export const connectProducer = async () => {
+     if (!isProducerConnected) {
+          await producer.connect();
+          isProducerConnected = true;
+          logger.info('Kafka producer connected (DLQ)');
+     }
+};
+
+// Graceful shutdown
+const shutdown = async () => {
+     logger.info('Shutting down Kafka connections...');
+     await consumer.disconnect();
+     if (isProducerConnected) {
+          await producer.disconnect();
+          isProducerConnected = false;
+     }
+     process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+
+
+
+================================================
+FILE: notification-service/src/config/logger.js
+================================================
+import winston from "winston";
+import { config } from "./index.js";
+
+
+export const logger = winston.createLogger({
+     level: config.LOG_LEVEL,
+     defaultMeta: {service: config.SERVICE_NAME},
+     format: winston.format.combine(
+          winston.format.timestamp(),
+          winston.format.printf(({level, message, timestamp, service}) =>{
+               return `[${timestamp}] [${level}] [${service}]: ${message}`
+          })
+     ),
+     transports: [new winston.transports.Console()]
+})
+
+
+
+
+================================================
+FILE: notification-service/src/kafka/consumer/email.consumer.js
+================================================
+import { consumer } from "../../config/kafka.js";
+import { logger } from "../../config/logger.js";
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+import { emailService } from "../../services/email.service.js";
+
+class EmailConsumer {
+  async start() {
+    await consumer.connect();
+    logger.info("Email consumer connected to Kafka");
+
+    await consumer.subscribe({
+      topics: Object.values(KAFKA_TOPICS),
+      fromBeginning: false,
+    });
+    await consumer.run({
+      eachMessage: async ({ topic, partition, message }) => {
+        try {
+          const rawValue = message.value?.toString();
+
+          if (!rawValue) {
+            logger.warn("Kafka message has no value");
+            return;
+          }
+
+          const value = JSON.parse(rawValue);
+
+          logger.info(`Processing messages from topic: ${topic}`, {
+            partition,
+            offset: message.offset,
+            key: message.key?.toString(),
+          });
+          await this.handleMessage(topic, value);
+        } catch (error) {
+          logger.error("Error processing message", {
+            topic,
+            partition,
+            offset: message.offset,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+        }
+      },
+    });
+
+    logger.info("Email consumer is running and listening for messages...");
+  }
+
+  async handleMessage(topic, data) {
+    switch (topic) {
+      case KAFKA_TOPICS.OTP_EMAIL:
+        await this.handleOtpEmail(data);
+        break;
+
+      case KAFKA_TOPICS.WELCOME_EMAIL:
+        await this.handleWelcomeEmail(data);
+        break;
+
+      // case KAFKA_TOPICS.BOOKING_CONFIRMED:
+      //   await this.handleBookingConfirmed(data);
+      //   break;
+
+      // case KAFKA_TOPICS.BOOKING_FAILED:
+      //   await this.handleBookingFailed(data);
+      //   break;
+
+      // case KAFKA_TOPICS.BOOKING_CANCELLED:
+      //   await this.handleBookingCancelled(data);
+      //   break;
+
+      default:
+        logger.warn(`Unknown topic: ${topic}`);
+    }
+  }
+
+  async handleOtpEmail(data) {
+    const { email, otp, ttlMinutes } = data;
+
+    if (!email || !otp) {
+      throw new Error("Missing required fields: email or otp");
+    }
+
+    await emailService.sendOtpEmail(email, otp, ttlMinutes || 5);
+    logger.info(`OTP email sent to ${email}`);
+  }
+
+  async handleWelcomeEmail(data) {
+    const { email, firstName } = data;
+
+    if (!email || !firstName) {
+      throw new Error("Missing required fields: email or firstName");
+    }
+
+    await emailService.sendWelcomeEmail(email, firstName);
+    logger.info(`Welcome email sent to ${email}`);
+  }
+}
+
+export const emailConsumer = new EmailConsumer();
+
+
+
+================================================
+FILE: notification-service/src/services/email.service.js
+================================================
+import { config } from "../config/index.js";
+import sgMail from "@sendgrid/mail";
+import { logger } from "../config/logger.js";
+import { getOtpTemplate, getWelcomeTemplate } from "../templates/index.js";
+
+class EmailService {
+  
+    constructor() {
+      this.from = config.MAIL_SEND;
+      this.maxRetries = 3;
+    };
+  
+  async sendWithRetry(msg, retries = 0) {
+    try {
+      await sgMail.send(msg);
+      logger.info(`Email successfully sent to ${msg.to}`, {
+        subject: msg.subject,
+        attempt: retries + 1,
+      });
+    } catch (error) {
+      logger.error(
+        `Email sending failed (attempt ${retries + 1}/${this.maxRetries})`,
+        {
+          to: msg.to,
+          error: error instanceof Error ? error.message : String(error),
+          code:
+            error instanceof Error && "code" in error ? error.code : undefined,
+        },
+      );
+
+      if (retries < this.maxRetries - 1) {
+        //Exponential backoff
+        const delay = Math.pow(2, retries) * 1000;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return this.sendWithRetry(msg, retries + 1);
+      }
+
+      throw error;
+    }
+  }
+
+  async sendOtpEmail(email, otp, ttlMinutes) {
+    const msg = {
+      to: email,
+      from: this.from,
+      subject: "Your verification code",
+      html: getOtpTemplate(otp, ttlMinutes),
+    };
+    return this.sendWithRetry(msg);
+  }
+
+  async sendWelcomeEmail(email, firstName) {
+    const msg = {
+      to: email,
+      from: this.from,
+      subject: "Welcome to the site - Email Verified",
+      html: getWelcomeTemplate(firstName),
+    };
+
+    return this.sendWithRetry(msg);
+  }
+}
+
+export const emailService = new EmailService();
+
+
+
+================================================
+FILE: notification-service/src/templates/index.js
+================================================
+import { config } from "../config/index.js";
+export function getOtpTemplate(otp, ttlMinutes) {
+  return `
+    <div style="
+      font-family: Arial, sans-serif; 
+      max-width: 420px; 
+      margin: auto; 
+      padding: 20px; 
+      border: 1px solid #e5e5e5; 
+      border-radius: 10px; 
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">DesignKarle</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi,
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Welcome to <strong>DesignKarle</strong> ðŸ‘‹  
+        Use the verification code below to complete your sign up:
+      </p>
+
+      <div style="text-align: center; margin: 30px 0;">
+        <div style="
+          display: inline-block; 
+          padding: 14px 26px; 
+          font-size: 32px; 
+          letter-spacing: 8px; 
+          font-weight: bold; 
+          background: #F4F4FF; 
+          border-radius: 8px; 
+          color: #4A3AFF;
+          border: 1px solid #e0e0ff;
+        ">
+          ${otp}
+        </div>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        This code will expire in <strong>${ttlMinutes} minutes</strong>.
+      </p>
+
+      <p style="font-size: 15px; color: #555;">
+        If this wasn't you, please ignore this email.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Happy Learning ðŸŽ‰<br/>
+        <strong>Team DesignKarle</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getWelcomeTemplate(firstName) {
+  return `
+    <div style="
+      font-family: Arial, sans-serif; 
+      max-width: 420px; 
+      margin: auto; 
+      padding: 20px; 
+      border: 1px solid #e5e5e5; 
+      border-radius: 10px; 
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">DesignKarle</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi <strong>${firstName}</strong>
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Welcome to <strong>DesignKarle</strong> ðŸ‘‹  
+        Your account has been successfully created and verified.
+      </p>
+
+      <div style="text-align: center; margin: 25px 0;">   
+        <a href="${config.FRONTEND_URL}/login" 
+          style="
+            display: inline-block;
+            padding: 12px 22px;
+            background: #4A3AFF;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            text-decoration: none;
+            border-radius: 6px;
+          ">
+          Login to Your Account
+        </a>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        If you did not create this account, please contact our support team immediately.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Happy Learning ðŸŽ‰<br/>
+        <strong>Team DesignKarle</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getTicketConfirmationTemplate(ticketData) {
+  const { pnr, trainName, trainNumber, from, to, date, passengers, amount } = ticketData;
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif; 
+      max-width: 600px; 
+      margin: auto; 
+      padding: 20px; 
+      border: 1px solid #e5e5e5; 
+      border-radius: 10px; 
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">ðŸŽ« Ticket Confirmed</h2>
+      </div>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>PNR:</strong> ${pnr}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Train:</strong> ${trainName} (${trainNumber})</p>
+      </div>
+
+      <div style="margin: 20px 0;">
+        <p style="margin: 10px 0;"><strong>From:</strong> ${from}</p>
+        <p style="margin: 10px 0;"><strong>To:</strong> ${to}</p>
+        <p style="margin: 10px 0;"><strong>Date:</strong> ${date}</p>
+        <p style="margin: 10px 0;"><strong>Amount Paid:</strong> â‚¹${amount}</p>
+      </div>
+
+      <div style="margin: 20px 0;">
+        <h3 style="color: #333;">Passenger Details:</h3>
+        ${passengers.map((p, i) => `
+          <p style="margin: 5px 0;">${i + 1}. ${p.name} (${p.age} yrs, ${p.gender})</p>
+        `).join('')}
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Safe Journey! ðŸš‚<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function formatDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+export const FAILURE_REASON_MESSAGES = {
+  payment_failed: 'Your payment could not be processed.',
+  confirm_seats_failed: 'We could not confirm your seats with the inventory system.',
+  booking_timeout: 'Your booking expired before payment was completed.',
+};
+
+export const CANCELLATION_REASON_MESSAGES = {
+  user_cancelled: 'You requested to cancel this booking.',
+  schedule_cancelled: 'The train schedule for this booking was cancelled by IRCTC.',
+};
+
+export function getBookingConfirmedTemplate(data) {
+  const {
+    bookingId,
+    firstName,
+    trainName,
+    trainNumber,
+    fromStationName,
+    toStationName,
+    departureDate,
+    passengers = [],
+    seats = [],
+    totalAmount,
+  } = data;
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">ðŸŽ« Booking Confirmed</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi ${firstName ? `<strong>${firstName}</strong>` : 'there'},
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Your train booking has been confirmed. Here are your journey details:
+      </p>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Booking ID:</strong> ${bookingId}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Train:</strong> ${trainName} (${trainNumber})</p>
+      </div>
+
+      <div style="margin: 20px 0;">
+        ${fromStationName ? `<p style="margin: 10px 0;"><strong>From:</strong> ${fromStationName}</p>` : ''}
+        ${toStationName ? `<p style="margin: 10px 0;"><strong>To:</strong> ${toStationName}</p>` : ''}
+        <p style="margin: 10px 0;"><strong>Date:</strong> ${formatDate(departureDate)}</p>
+        <p style="margin: 10px 0;"><strong>Amount Paid:</strong> â‚¹${totalAmount}</p>
+      </div>
+
+      ${seats.length ? `
+      <div style="margin: 20px 0;">
+        <h3 style="color: #333; margin-bottom: 10px;">Seats:</h3>
+        ${seats.map(s => `
+          <p style="margin: 5px 0;">Seat ${s.seatNumber} â€” ${s.seatType} (â‚¹${s.price})</p>
+        `).join('')}
+      </div>` : ''}
+
+      ${passengers.length ? `
+      <div style="margin: 20px 0;">
+        <h3 style="color: #333; margin-bottom: 10px;">Passenger Details:</h3>
+        ${passengers.map((p, i) => `
+          <p style="margin: 5px 0;">${i + 1}. ${p.name} (${p.age} yrs, ${p.gender})</p>
+        `).join('')}
+      </div>` : ''}
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Safe Journey! ðŸš‚<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getBookingFailedTemplate(data) {
+  const { bookingId, firstName, reason } = data;
+  const friendlyReason = FAILURE_REASON_MESSAGES[reason] || 'Your booking could not be completed.';
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">Booking Unsuccessful</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi ${firstName ? `<strong>${firstName}</strong>` : 'there'},
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        We're sorry â€” we were unable to complete your booking.
+      </p>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Booking ID:</strong> ${bookingId}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Reason:</strong> ${friendlyReason}</p>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        If any amount was debited, it will be refunded to your original payment method automatically. You can try booking again from your IRCTC account.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        We're sorry for the inconvenience.<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getBookingCancelledTemplate(data) {
+  const { bookingId, firstName, reason, refundAmount } = data;
+  const friendlyReason = CANCELLATION_REASON_MESSAGES[reason] || 'Your booking has been cancelled.';
+  const refundLine = refundAmount && refundAmount > 0
+    ? `A refund of <strong>â‚¹${refundAmount}</strong> has been initiated and will be credited to your original payment method within 5â€“7 business days.`
+    : `No refund is applicable for this cancellation.`;
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">Booking Cancelled</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi ${firstName ? `<strong>${firstName}</strong>` : 'there'},
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Your booking has been cancelled successfully.
+      </p>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Booking ID:</strong> ${bookingId}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Reason:</strong> ${friendlyReason}</p>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        ${refundLine}
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        We hope to see you onboard again soon.<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+
+
+
+================================================
+FILE: shared/constants/constants.js
+================================================
+/**
+ * Centralized Kafka topic definitions.
+ * Every service imports from here so topic names stay in sync.
+ */
+export const KAFKA_TOPICS = {
+     // Notification topics (user-service -> notification-service)
+     OTP_EMAIL: 'notification.otp-email',
+     WELCOME_EMAIL: 'notification.welcome-email',
+     // BOOKING_EMAIL: 'notification.booking-email',
+     // PAYMENT_EMAIL: 'notification.payment-email',
+
+     // // Admin topics (admin-service -> inventory/search)
+     // TRAIN_CREATED: 'admin.train-created',
+     // STATION_CREATED: 'admin.station-created',
+     // ROUTE_CREATED: 'admin.route-created',
+     // SCHEDULE_CREATED: 'admin.schedule-created',
+     // TRAIN_UPDATED: 'admin.train-updated',
+     // STATION_UPDATED: 'admin.station-updated',
+     // ROUTE_UPDATED: 'admin.route-updated',
+     // SCHEDULE_CANCELLED: 'admin.schedule-cancelled',
+
+     // // Inventory topics (inventory-service -> search-service)
+     // SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
+
+     // // Booking topics (booking-service -> notification-service)
+     // BOOKING_CONFIRMED: 'booking.confirmed',
+     // BOOKING_CANCELLED: 'booking.cancelled',
+     // BOOKING_FAILED: 'booking.failed',
+
+     // // Payment topics (payment-service -> booking-service)
+     // PAYMENT_SUCCESS: 'payment.success',
+     // PAYMENT_FAILED: 'payment.failed',
+
+     // // Dead-letter queues (per service â€” poison messages land here)
+     // DLQ_BOOKING: 'dlq.booking-service',
+     // DLQ_INVENTORY: 'dlq.inventory-service',
+     // DLQ_SEARCH: 'dlq.search-service',
+     // DLQ_NOTIFICATION: 'dlq.notification-service',
+};
+
+/**
+ * Max retries before a consumer message is sent to the DLQ.
+ * After this many failures the message is considered poison.
+ */
+const DLQ_MAX_RETRIES = 3;
+
+
+
+
+================================================
+FILE: user-service/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js", "../shared/constants/constants.js"]
+}
+
+
+
+================================================
+FILE: user-service/package.json
 ================================================
 {
   "name": "user-service",
@@ -98,7 +1071,7 @@ FILE: package.json
 
 
 ================================================
-FILE: prisma7.config.ts
+FILE: user-service/prisma7.config.ts
 ================================================
 // This file was generated by Prisma, and assumes you have installed the following:
 // npm install --save-dev prisma dotenv
@@ -118,7 +1091,7 @@ export default defineConfig({
 
 
 ================================================
-FILE: skills-lock.json
+FILE: user-service/skills-lock.json
 ================================================
 {
   "version": 1,
@@ -183,7 +1156,7 @@ FILE: skills-lock.json
 
 
 ================================================
-FILE: .env.example
+FILE: user-service/.env.example
 ================================================
 # ==========================================
 # User Service - Environment Configuration
@@ -255,7 +1228,7 @@ INTERNAL_SERVICE_KEY=your_shared_internal_service_key_here
 
 
 ================================================
-FILE: prisma/schema.prisma
+FILE: user-service/prisma/schema.prisma
 ================================================
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
@@ -302,7 +1275,7 @@ model AuthProvider {
 
 
 ================================================
-FILE: prisma/migrations/migration_lock.toml
+FILE: user-service/prisma/migrations/migration_lock.toml
 ================================================
 # Please do not edit this file manually
 # It should be added in your version-control system (e.g., Git)
@@ -311,7 +1284,7 @@ provider = "postgresql"
 
 
 ================================================
-FILE: prisma/migrations/20260904144739_init/migration.sql
+FILE: user-service/prisma/migrations/20260904144739_init/migration.sql
 ================================================
 -- CreateTable
 CREATE TABLE "User" (
@@ -357,7 +1330,7 @@ ALTER TABLE "AuthProvider" ADD CONSTRAINT "AuthProvider_userId_fkey" FOREIGN KEY
 
 
 ================================================
-FILE: src/index.js
+FILE: user-service/src/index.js
 ================================================
 import "dotenv/config";
 
@@ -439,7 +1412,7 @@ startServer();
 
 
 ================================================
-FILE: src/config/index.js
+FILE: user-service/src/config/index.js
 ================================================
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -524,7 +1497,56 @@ export { config };
 
 
 ================================================
-FILE: src/config/logger.js
+FILE: user-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs"
+import { config } from "./index.js";
+import logger from "./logger.js";
+
+export const kafka = new Kafka({
+  clientId: config.KAFKA_CLIENT_ID,
+  brokers: [config.KAFKA_BROKER || 'localhost:9093'],
+  logLevel: logLevel.ERROR,
+  retry:{
+    initialRetryTime: 300,
+    retries: 8,
+    maxRetryTime:300000
+}
+})
+
+export const producer = kafka.producer({
+  allowAutoTopicCreation: true,
+  transactionTimeout: 30000,
+  idempotent: true,//Ensures exactly once delivery
+  maxInFlightRequests: 5,
+  retry: {
+    retries:5
+  }
+})
+
+let isConnected = false;
+
+export const connectProducer = async () => {
+  if (!isConnected) {
+    await producer.connect();
+             isConnected = true;
+             logger.info('Kafka producer connected');
+  }
+}
+export const disconnectProducer = async () => {
+     if (isConnected) {
+          await producer.disconnect();
+          isConnected = false;
+          logger.info('Kafka producer disconnected');
+     }
+};
+
+process.on("SIGTERM", disconnectProducer);
+process.on("SIGINT", disconnectProducer);
+
+
+================================================
+FILE: user-service/src/config/logger.js
 ================================================
 import winston from "winston"
 import { config } from "./index.js";
@@ -545,7 +1567,7 @@ export default logger;
 
 
 ================================================
-FILE: src/config/prisma.js
+FILE: user-service/src/config/prisma.js
 ================================================
 import { PrismaPg } from "@prisma/adapter-pg";
 import { config } from "./index.js";
@@ -568,7 +1590,7 @@ export default prisma
 
 
 ================================================
-FILE: src/config/redis.js
+FILE: user-service/src/config/redis.js
 ================================================
 import Redis from "ioredis";
 import { config } from "./index.js";
@@ -714,7 +1736,7 @@ export default RedisClient;
 
 
 ================================================
-FILE: src/controllers/auth.controller.js
+FILE: user-service/src/controllers/auth.controller.js
 ================================================
 import { config } from "../config/index.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -784,14 +1806,14 @@ export const login = asyncHandler(async (req, res) => {
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: true,
-    sameSite: "strict",
+    sameite: "strict",
     maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
   });
   res
     .cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "strict",
+      samesite: "strict",
       maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
     })
     .status(200)
@@ -813,14 +1835,14 @@ export const rotateRefreshToken = asyncHandler(async (req, res) => {
   res.cookie("accessToken", newAccessToken, {
     httpOnly: true,
     secure: true,
-    sameSite: "strict",
+    samesite: "strict",
     maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
   });
   res
     .cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: true,
-      sameSite: "strict",
+      samesite: "strict",
       maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
     })
     .status(200)
@@ -842,7 +1864,7 @@ export const verifyGoogleToken = asyncHandler(async (req, res) => {
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
     secure: true,
-    sameSite: "strict",
+    samesite: "strict",
     maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
   });
   res
@@ -863,13 +1885,83 @@ export const verifyGoogleToken = asyncHandler(async (req, res) => {
 
 
 ================================================
-FILE: src/middlewares/auth.middleware.js
+FILE: user-service/src/kafka/producer/notification.producer.js
+================================================
+import { connectProducer, producer } from "../../config/kafka.js";
+import logger from "../../config/logger.js";
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+
+class NotificationProducer {
+  constructor() {
+    this.isInitialized = false;
+  }
+
+  async initilaize() {
+    if (!this.isInitialized) {
+      await connectProducer();
+      this.isInitialized = true;
+    }
+  }
+  async sendMessage(topic, key, value) {
+    try {
+      await this.initilaize();
+      const message = {
+        topic,
+        messages: [
+          {
+            key: key || `${topic}--${Date.now()}`,
+            value: JSON.stringify(value),
+            timestamp: Date.now().toString(),
+          },
+        ],
+      };
+      const result = await producer.send(message);
+      logger.info(`Message sent to kafka topic: ${topic}`, {
+        key,
+        partition: result[0].partition,
+        offset: result[0].offset,
+      });
+      return result;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      logger.error(`Failed to send message to kafka topic: ${topic}`, {
+        error: errorMessage,
+        stack: errorStack,
+        key,
+      });
+      throw error;
+    }
+  }
+  async sendOtpEmail(email, otp, ttlMinutes = 5){
+            return this.sendMessage(
+                 KAFKA_TOPICS.OTP_EMAIL,
+                 `otp-${email}`,
+                 {email, otp, ttlMinutes}
+            )
+       }
+  
+       async sendWelcomeEmail(email, firstName){
+            return this.sendMessage(
+                 KAFKA_TOPICS.WELCOME_EMAIL,
+                 `welcome-${email}`,
+                 {email, firstName}
+            )
+       }
+}
+export const notificationProducer=new NotificationProducer()
+
+
+
+================================================
+FILE: user-service/src/middlewares/auth.middleware.js
 ================================================
 [Empty file]
 
 
 ================================================
-FILE: src/middlewares/cors.middleware.js
+FILE: user-service/src/middlewares/cors.middleware.js
 ================================================
 import cors from "cors"
 import { config } from "../config/index.js";
@@ -879,7 +1971,9 @@ const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(','
 export const corsMiddleware = cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true)
-    if (!allowedOrigins.includes(origin)) {
+    console.log("ALLOWED:", allowedOrigins);
+    console.log("REQUEST ORIGIN:", origin);
+    if (allowedOrigins.includes(origin)) {
       callback(null,true)
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -894,16 +1988,22 @@ export const corsMiddleware = cors({
 
 
 ================================================
-FILE: src/middlewares/error.middleware.js
+FILE: user-service/src/middlewares/error.middleware.js
 ================================================
+import { config } from "../config/index.js";
 import logger from "../config/logger.js";
 import { AppError } from "../utils/error.js";
 
 export const errorHandler = (err, req, res, next) => {
-  console.error("\n========== ERROR ==========");
-  console.error("Message:", err?.message);
-  console.error("Stack:", err?.stack);
-  console.error("===========================\n");
+  // Always log the full error internally
+  logger.error({
+    message: err?.message || "Unknown error",
+    stack: err?.stack,
+    code: err?.code,
+    path: req.path,
+    method: req.method,
+    // optional: userId if you attach it later
+  });
 
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
@@ -913,23 +2013,40 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
-  logger.error({
-    message: err instanceof Error ? err.message : String(err),
-    stack: err instanceof Error ? err.stack : undefined,
-    path: req.path,
-    method: req.method,
-  });
+  // Prisma known errors (optional but useful)
+  if (err.code === "P2002") {
+    // Unique constraint violation
+    return res.status(409).json({
+      success: false,
+      error: "CONFLICT",
+      message: "Resource already exists",
+    });
+  }
+
+  if (err.code === "P2025") {
+    // Record not found
+    return res.status(404).json({
+      success: false,
+      error: "NOT_FOUND",
+      message: "Resource not found",
+    });
+  }
+
+  // Unexpected errors
+  const isDev = config.NODE_ENV === "development";
 
   return res.status(500).json({
     success: false,
     error: "SERVER_ERROR",
-    message: "Internal Server Error",
+    message: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
   });
 };
 
 
+
 ================================================
-FILE: src/middlewares/req.middleware.js
+FILE: user-service/src/middlewares/req.middleware.js
 ================================================
 import logger from "../config/logger.js";
 
@@ -950,7 +2067,7 @@ export const reqLogger = (req, res, next) => {
 
 
 ================================================
-FILE: src/routes/auth.route.js
+FILE: user-service/src/routes/auth.route.js
 ================================================
 import express from "express";
 import {
@@ -959,6 +2076,7 @@ import {
   sendOTP,
   verifyOTP,
 } from "../controllers/auth.controller.js";
+import { verifyGoogleIdToken } from "../services/auth.service.js";
 
 const router = express.Router();
 
@@ -966,13 +2084,14 @@ router.post("/send-otp", sendOTP);
 router.post("/verify-otp", verifyOTP);
 router.post("/login", login);
 router.post("/rotate", rotateRefreshToken);
+router.post("/google-auth", verifyGoogleIdToken);
 
 export default router;
 
 
 
 ================================================
-FILE: src/services/auth.service.js
+FILE: user-service/src/services/auth.service.js
 ================================================
 import logger from "../config/logger.js";
 import prisma from "../config/prisma.js";
@@ -994,6 +2113,7 @@ import jwt from "jsonwebtoken";
 import { redis } from "../config/redis.js";
 import { config } from "../config/index.js";
 import { OAuth2Client } from "google-auth-library";
+import { notificationProducer } from "../kafka/producer/notification.producer.js";
 
 const client = new OAuth2Client(config.GOOGLE_CLIENT_ID);
 
@@ -1008,7 +2128,7 @@ export const sendOTP = async (firstName, lastName, email, password) => {
   const hashedPassword = await bcrypt.hash(password, 12);
   const meta = { firstName, lastName, email, hashedPassword };
   const { otp, otpSessionId } = await generateAndStoreOtp(meta);
-  await sendOtpEmail(email, otp);
+  await notificationProducer.sendOtpEmail(email, otp)
   logger.info(`OTP email queued for : ${email}`);
   return { otpSessionId };
 };
@@ -1027,7 +2147,7 @@ export const verifyOTP = async (otp, otpSessionId) => {
       emailVerified: true,
     },
   });
-  await verifyOtpEmail(meta);
+  await notificationProducer.sendWelcomeEmail(meta.email, meta.firstName)
   return user;
 };
 
@@ -1169,7 +2289,7 @@ export const verifyGoogleIdToken = async (idToken,deviceId) => {
 
 
 ================================================
-FILE: src/utils/asyncHandler.js
+FILE: user-service/src/utils/asyncHandler.js
 ================================================
 export const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
@@ -1178,7 +2298,7 @@ export const asyncHandler = (fn) => (req, res, next) => {
 
 
 ================================================
-FILE: src/utils/auth.js
+FILE: user-service/src/utils/auth.js
 ================================================
 /**
  * @typedef {import("jsonwebtoken").JwtPayload & {
@@ -1239,7 +2359,7 @@ export const verifyRefreshToken = (refreshToken) => {
 
 
 ================================================
-FILE: src/utils/deviceFingerprint.js
+FILE: user-service/src/utils/deviceFingerprint.js
 ================================================
 import crypto from "crypto"
 
@@ -1259,7 +2379,7 @@ export function getDeviceFingerprint(req) {
 
 
 ================================================
-FILE: src/utils/email.js
+FILE: user-service/src/utils/email.js
 ================================================
 import sgMail from '@sendgrid/mail';
 import 'dotenv/config';
@@ -1332,7 +2452,7 @@ export async function verifyOtpEmail(meta) {
 
 
 ================================================
-FILE: src/utils/error.js
+FILE: user-service/src/utils/error.js
 ================================================
 export class AppError extends Error {
      constructor(message, statusCode, code) {
@@ -1388,7 +2508,7 @@ export class InternalServerError extends AppError {
 
 
 ================================================
-FILE: src/utils/otp.js
+FILE: user-service/src/utils/otp.js
 ================================================
 import { config } from "../config/index.js";
 import { redis } from "../config/redis.js";
