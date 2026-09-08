@@ -35,6 +35,7 @@ export const requireAuth = (req, res, next) => {
     req.user = {
       id: payload.id,
     };
+     next();
   } catch (err) {
     if (err instanceof jwt.TokenExpiredError) {
       return next(

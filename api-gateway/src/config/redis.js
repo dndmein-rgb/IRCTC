@@ -1,6 +1,6 @@
 import {Redis} from "ioredis";
 import { config } from "./index.js";
-import logger from "./logger.js";
+import {logger} from "./logger.js";
 
 class RedisClient {
   static instance;

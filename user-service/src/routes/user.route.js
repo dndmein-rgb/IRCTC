@@ -1,10 +1,10 @@
 import express from "express"
-import { requireAuth } from "../middlewares/auth.middleware.js";
 import { getProfile } from "../controllers/user.controller.js";
+import { getUserContext } from "../middlewares/getUserContext.js";
 
 const router = express.Router();
 
-router.get("/user-profile",requireAuth,getProfile)
+router.get("/profile",getUserContext,getProfile)
 
 
 export default router;
