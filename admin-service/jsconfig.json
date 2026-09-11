@@ -4,7 +4,9 @@
     "moduleResolution": "NodeNext",
     "target": "ES2022",
     "checkJs": true,
-    "noImplicitAny": false
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["node"]
   },
   "include": ["**/*.js", "../shared/constants/constants.js"]
 }

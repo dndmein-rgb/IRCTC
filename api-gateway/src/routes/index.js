@@ -1,5 +1,5 @@
 import express from "express";
-import { createProxy } from "../services/proxy.js";
+import { createProxy, getCircuitBreakerStatus } from "../services/proxy.js";
 import { config } from "../config/index.js";
 import { combinedRateLimit, endpointRateLimit } from "../middlewares/rateLimit.middleware.js";
 import { requireAuth } from "../middlewares/auth.middleware.js";
@@ -66,5 +66,163 @@ router.delete(
      userServiceProxy
 )
 
+const adminServiceProxy = createProxy('adminService', config.SERVICES.ADMIN_SERVICE_URL);
+
+router.post(
+     '/admins/stations/station',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+);
+
+router.post(
+     '/admins/trains/train',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+);
+
+router.post(
+     '/admins/trains/route',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+
+router.post(
+     '/admins/schedules/schedule',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+
+router.get(
+     '/admins/stations/station',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+
+router.get(
+     '/admins/trains/train/:trainId',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+);
+
+router.put(
+     '/admins/schedules/schedule/:scheduleId',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+// ===========================
+// SEARCH SERVICE ROUTES (public - no auth required)
+// ===========================
+const searchServiceProxy = createProxy('searchService', config.SERVICES.SEARCH_SERVICE_URL);
+
+router.get(
+     '/search/trains',
+     endpointRateLimit(60, 60000), // 60 requests per minute
+     searchServiceProxy
+);
+
+router.get(
+     '/search/autocomplete',
+     endpointRateLimit(120, 60000), // 120 requests per minute
+     searchServiceProxy
+);
+
+// ===========================
+// INVENTORY SERVICE ROUTES (public read-only)
+// ===========================
+const inventoryServiceProxy = createProxy('inventoryService', config.SERVICES.INVENTORY_SERVICE_URL);
+
+// Public: aggregate availability (used by search results)
+router.get(
+     '/inventory/schedules/:scheduleId/availability',
+     endpointRateLimit(120, 60000), // 120 requests per minute
+     inventoryServiceProxy
+);
+
+// Authenticated: individual seat statuses
+router.get(
+     '/inventory/schedules/:scheduleId/seats',
+     requireAuth,
+     combinedRateLimit(),
+     inventoryServiceProxy
+);
+
+// Note: lock/unlock/confirm/cancel-booking are now internal-only
+// (called by booking-service directly, not through the gateway)
+
+// ===========================
+// BOOKING SERVICE ROUTES
+// ===========================
+const bookingServiceProxy = createProxy('bookingService', config.SERVICES.BOOKING_SERVICE_URL);
+
+router.post(
+     '/bookings/bookings',
+     requireAuth,
+     endpointRateLimit(5, 60000), // 5 booking attempts per minute
+     bookingServiceProxy
+);
+
+router.get(
+     '/bookings/bookings',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+router.get(
+     '/bookings/bookings/:bookingId',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+router.post(
+     '/bookings/bookings/:bookingId/verify-payment',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+router.post(
+     '/bookings/bookings/:bookingId/cancel',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+// ===========================
+// PAYMENT SERVICE ROUTES (webhook only - public)
+// ===========================
+const paymentServiceProxy = createProxy('paymentService', config.SERVICES.PAYMENT_SERVICE_URL);
+
+// Razorpay webhook (public — no auth, signature-verified by payment-service)
+router.post(
+     '/payments/webhooks/razorpay',
+     paymentServiceProxy
+);
+
+// Gateway Health Status
+
+router.get('/gateway/health', (req, res) => {
+     res.status(200).json({
+          success: true,
+          message: "API Gateway is healthy",
+          timestamp: new Date().toISOString()
+     });
+});
+
+router.get('/gateway/circuit-breakers', (req, res) => {
+     const status = getCircuitBreakerStatus();
+     res.status(200).json({
+          success: true,
+          circuitBreakers: status,
+     });
+});
 
 export default router;
