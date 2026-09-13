@@ -13,6 +13,7 @@ import { errorHandler } from "./middlewares/error.middleware.js";
 
 import stationRoutes from "./routes/station.route.js"
 import trainRoutes from "./routes/train.route.js"
+import scheduleRoutes from "./routes/schedule.route.js"
 
 const app = express();
 
@@ -60,7 +61,7 @@ app.get('/health', (req, res) => {
 // API Routes - All protected by auth middleware
 app.use("/stations", stationRoutes);
 app.use("/trains", trainRoutes);
-// app.use("/schedules", scheduleRoutes);
+app.use("/schedules", scheduleRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);

@@ -1,20 +1,56 @@
-import  * as trainService  from "../services/train.service.js";
+import * as trainService from "../services/train.service.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { BadRequestError } from "../utils/error.js";
 
-export const createTrain = asyncHandler(async(req,res) => {
+export const createTrain = asyncHandler(async (req, res) => {
   const { trainName, trainNumber, seats, coachName } = req.body;
-  if(!trainNumber || !trainName || !coachName || !seats){
-           throw new BadRequestError("trainNumber, trainName, and seats are required");
-      }
- 
-      if(seats.length === 0){
-           throw new BadRequestError("Atleast one seat must be defined...")
+  if (!trainNumber || !trainName || !coachName || !seats) {
+    throw new BadRequestError("trainNumber, trainName, and seats are required");
   }
-      const train = await trainService.createTrain({trainNumber, trainName, coachName, seats});
-          return res.status(201).json({
-               success: true,
-               message: "Train added successfully",
-               data: train
-          })
-})
+
+  if (seats.length === 0) {
+    throw new BadRequestError("Atleast one seat must be defined...");
+  }
+  const train = await trainService.createTrain({
+    trainNumber,
+    trainName,
+    coachName,
+    seats,
+  });
+  return res.status(201).json({
+    success: true,
+    message: "Train added successfully",
+    data: train,
+  });
+});
+
+export const getTrainById = asyncHandler(async (req, res) => {
+  const { trainId } = req.params;
+  if (!trainId) {
+    throw new BadRequestError("Train Id is missing");
+  }
+  const train = await trainService.getTrainById(trainId);
+  return res.status(200).json({
+    success: true,
+    data: train,
+  });
+});
+
+export const createRoute = asyncHandler(async (req, res) => {
+  const { trainId, stations } = req.body;
+  if (!trainId || !stations) {
+    throw new BadRequestError("Train Id and stations are required");
+  }
+  if (stations.length < 2) {
+    throw new BadRequestError(
+      "A route must have at least 2 stations (origin and destination)",
+    );
+  }
+
+  const route = await trainService.createRoute({ trainId, stations });
+  return res.status(201).json({
+    success: true,
+    message: "Route Created",
+    data: route,
+  });
+});

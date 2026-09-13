@@ -1,0 +1,5073 @@
+Directory structure:
+└── IRCTC/
+    ├── docker-compose.yaml
+    ├── admin-service/
+    │   ├── jsconfig.json
+    │   ├── package.json
+    │   ├── prisma.config.ts
+    │   ├── .env.example
+    │   ├── prisma/
+    │   │   ├── schema.prisma
+    │   │   └── migrations/
+    │   │       ├── migration_lock.toml
+    │   │       └── 20260910171216_init/
+    │   │           └── migration.sql
+    │   └── src/
+    │       ├── index.js
+    │       ├── config/
+    │       │   ├── index.js
+    │       │   ├── kafka.js
+    │       │   ├── logger.js
+    │       │   └── prisma.js
+    │       ├── controllers/
+    │       │   ├── station.controller.js
+    │       │   └── train.controller.js
+    │       ├── kafka/
+    │       │   └── producer/
+    │       │       └── admin.producer.js
+    │       ├── middlewares/
+    │       │   ├── cors.middleware.js
+    │       │   ├── error.middleware.js
+    │       │   ├── getUserContext.js
+    │       │   └── req.middleware.js
+    │       ├── routes/
+    │       │   ├── station.route.js
+    │       │   └── train.route.js
+    │       ├── services/
+    │       │   ├── station.service.js
+    │       │   └── train.service.js
+    │       └── utils/
+    │           ├── asyncHandler.js
+    │           └── error.js
+    ├── api-gateway/
+    │   ├── jsconfig.json
+    │   ├── package.json
+    │   ├── .env.example
+    │   └── src/
+    │       ├── index.js
+    │       ├── config/
+    │       │   ├── index.js
+    │       │   ├── logger.js
+    │       │   └── redis.js
+    │       ├── middlewares/
+    │       │   ├── auth.middleware.js
+    │       │   ├── cors.middleware.js
+    │       │   ├── error.middleware.js
+    │       │   ├── notFound.middleware.js
+    │       │   ├── rateLimit.middleware.js
+    │       │   └── req.middleware.js
+    │       ├── routes/
+    │       │   └── index.js
+    │       ├── services/
+    │       │   └── proxy.js
+    │       └── utils/
+    │           └── error.js
+    ├── notification-service/
+    │   ├── jsconfig.json
+    │   ├── package.json
+    │   ├── .env.example
+    │   └── src/
+    │       ├── index.js
+    │       ├── config/
+    │       │   ├── index.js
+    │       │   ├── kafka.js
+    │       │   └── logger.js
+    │       ├── kafka/
+    │       │   └── consumer/
+    │       │       └── email.consumer.js
+    │       ├── services/
+    │       │   └── email.service.js
+    │       └── templates/
+    │           └── index.js
+    ├── shared/
+    │   └── constants/
+    │       └── constants.js
+    └── user-service/
+        ├── jsconfig.json
+        ├── package.json
+        ├── prisma.config.ts
+        ├── skills-lock.json
+        ├── .env.example
+        ├── prisma/
+        │   ├── schema.prisma
+        │   └── migrations/
+        │       ├── migration_lock.toml
+        │       └── 20260904144739_init/
+        │           └── migration.sql
+        └── src/
+            ├── index.js
+            ├── config/
+            │   ├── index.js
+            │   ├── kafka.js
+            │   ├── logger.js
+            │   ├── prisma.js
+            │   └── redis.js
+            ├── controllers/
+            │   ├── auth.controller.js
+            │   └── user.controller.js
+            ├── kafka/
+            │   └── producer/
+            │       └── notification.producer.js
+            ├── middlewares/
+            │   ├── cors.middleware.js
+            │   ├── error.middleware.js
+            │   ├── getUserContext.js
+            │   └── req.middleware.js
+            ├── routes/
+            │   ├── auth.route.js
+            │   └── user.route.js
+            ├── services/
+            │   ├── auth.service.js
+            │   └── user.service.js
+            └── utils/
+                ├── asyncHandler.js
+                ├── auth.js
+                ├── deviceFingerprint.js
+                ├── email.js
+                ├── error.js
+                └── otp.js
+
+================================================
+FILE: docker-compose.yaml
+================================================
+name: irctc-backend
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: irctcpass
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - irctc-network
+  
+  pgadmin: 
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - postgres
+    networks:
+      - irctc-network
+
+  redis:
+    image: redis/redis-stack:6.2.6-v19
+    container_name: redis
+    restart: always
+    environment:
+      REDIS_ARGS: "--requirepass irctcpass"
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    volumes:
+      - redis_data:/data
+    networks:
+      - irctc-network
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+    networks:
+      - irctc-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - irctc-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: always
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: irctc-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - irctc-network
+  
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+  #   container_name: elasticsearch
+  #   restart: always
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - ES_JAVA_OPTS=-Xms512m -Xmx512m
+  #   ports:
+  #     - "9200:9200"
+  #   volumes:
+  #     - es_data:/usr/share/elasticsearch/data
+  #   networks:
+  #     - irctc-network
+
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:8.12.0
+  #   container_name: kibana
+  #   restart: always
+  #   depends_on:
+  #     - elasticsearch
+  #   ports:
+  #     - "5601:5601"
+  #   environment:
+  #     ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  #   networks:
+  #     - irctc-network
+volumes:
+  postgres_data:
+  redis_data:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+  # es_data:
+
+networks:
+  irctc-network:
+    driver: bridge
+
+
+================================================
+FILE: admin-service/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["**/*.js", "../shared/constants/constants.js"]
+}
+
+
+================================================
+FILE: admin-service/package.json
+================================================
+{
+  "name": "admin-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "db:migrate": "npx prisma migrate dev --name init",
+    "db:generate": "npx prisma generate"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.4.1",
+    "@prisma/client": "^7.4.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.19.0",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.2",
+    "nodemon": "^3.1.14",
+    "prisma": "^7.4.1"
+  }
+}
+
+
+
+================================================
+FILE: admin-service/prisma.config.ts
+================================================
+// This file was generated by Prisma, and assumes you have installed the following:
+// npm install --save-dev prisma dotenv
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: process.env["DATABASE_URL"],
+  },
+});
+
+
+================================================
+FILE: admin-service/.env.example
+================================================
+PORT=4003
+NODE_ENV=development
+LOG_LEVEL=info
+
+DATABASE_URL=postgres://admin:your-password@localhost:5432/admin_service_database
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000,http://localhost:4001,http://localhost:4003,http://localhost:4005
+
+KAFKA_BROKER=localhost:9093
+KAFKA_CLIENT_ID=admin-service
+
+# Shared secret used by other services (booking, notification) to call internal endpoints
+INTERNAL_SERVICE_KEY=your_shared_internal_service_key_here
+
+
+================================================
+FILE: admin-service/prisma/schema.prisma
+================================================
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Station {
+  id        String   @id @default(uuid())
+  name      String   @unique // "New Delhi"
+  code      String   @unique // "NDLS"
+  city      String // "Delhi"
+  state     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  routeStations RouteStation[]
+
+  @@index([name])
+  @@index([code])
+  @@map("stations")
+}
+
+model Train {
+  id          String   @id @default(uuid())
+  trainNumber String   @unique // "12301"
+  trainName   String // "Rajdhani Express"
+  coachName   String   @default("AC") // Single coach per train (simplified)
+  totalSeats  Int // Total seats in the single coach
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  seats     Seat[]
+  route     Route?
+  schedules Schedule[]
+
+  @@map("trains")
+}
+
+enum SeatType {
+  LOWER
+  MIDDLE
+  UPPER
+  SIDE_LOWER
+  SIDE_UPPER
+}
+
+model Seat {
+  id         String   @id @default(uuid())
+  trainId    String
+  seatNumber Int // 1, 2, 3...
+  seatType   SeatType // LOWER, MIDDLE, UPPER etc
+  price      Float // Price for this seat type
+
+  train Train @relation(fields: [trainId], references: [id], onDelete: Cascade)
+
+  @@unique([trainId, seatNumber])
+  @@map("seats")
+}
+
+model Route {
+  id      String @id @default(uuid())
+  trainId String @unique
+
+  train         Train          @relation(fields: [trainId], references: [id], onDelete: Cascade)
+  routeStations RouteStation[]
+
+  @@map("routes")
+}
+
+model RouteStation {
+  id                 String  @id @default(uuid())
+  routeId            String
+  stationId          String
+  sequenceNumber     Int // 1, 2, 3... order of station in route
+  arrivalTime        String? // "06:00"
+  departureTime      String? // "06:10" (null for last station)
+  distanceFromOrigin Float   @default(0) // in km, for pricing calculation
+
+  route   Route   @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, sequenceNumber])
+  @@unique([routeId, stationId])
+  @@map("route_stations")
+}
+
+model Schedule {
+  id            String         @id @default(uuid())
+  trainId       String
+  departureDate DateTime       @db.Date // The date this train runs
+  status        ScheduleStatus @default(ACTIVE)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  train Train @relation(fields: [trainId], references: [id], onDelete: Cascade)
+
+  @@unique([trainId, departureDate])
+  @@map("schedules")
+}
+
+enum ScheduleStatus {
+  ACTIVE
+  CANCELLED
+}
+
+
+================================================
+FILE: admin-service/prisma/migrations/migration_lock.toml
+================================================
+# Please do not edit this file manually
+# It should be added in your version-control system (e.g., Git)
+provider = "postgresql"
+
+
+
+================================================
+FILE: admin-service/prisma/migrations/20260910171216_init/migration.sql
+================================================
+-- CreateEnum
+CREATE TYPE "SeatType" AS ENUM ('LOWER', 'MIDDLE', 'UPPER', 'SIDE_LOWER', 'SIDE_UPPER');
+
+-- CreateEnum
+CREATE TYPE "ScheduleStatus" AS ENUM ('ACTIVE', 'CANCELLED');
+
+-- CreateTable
+CREATE TABLE "stations" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
+    "city" TEXT NOT NULL,
+    "state" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "stations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "trains" (
+    "id" TEXT NOT NULL,
+    "trainNumber" TEXT NOT NULL,
+    "trainName" TEXT NOT NULL,
+    "coachName" TEXT NOT NULL DEFAULT 'AC',
+    "totalSeats" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "trains_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "seats" (
+    "id" TEXT NOT NULL,
+    "trainId" TEXT NOT NULL,
+    "seatNumber" INTEGER NOT NULL,
+    "seatType" "SeatType" NOT NULL,
+    "price" DOUBLE PRECISION NOT NULL,
+
+    CONSTRAINT "seats_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "routes" (
+    "id" TEXT NOT NULL,
+    "trainId" TEXT NOT NULL,
+
+    CONSTRAINT "routes_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "route_stations" (
+    "id" TEXT NOT NULL,
+    "routeId" TEXT NOT NULL,
+    "stationId" TEXT NOT NULL,
+    "sequenceNumber" INTEGER NOT NULL,
+    "arrivalTime" TEXT,
+    "departureTime" TEXT,
+    "distanceFromOrigin" DOUBLE PRECISION NOT NULL DEFAULT 0,
+
+    CONSTRAINT "route_stations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "schedules" (
+    "id" TEXT NOT NULL,
+    "trainId" TEXT NOT NULL,
+    "departureDate" DATE NOT NULL,
+    "status" "ScheduleStatus" NOT NULL DEFAULT 'ACTIVE',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "schedules_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "stations_name_key" ON "stations"("name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "stations_code_key" ON "stations"("code");
+
+-- CreateIndex
+CREATE INDEX "stations_name_idx" ON "stations"("name");
+
+-- CreateIndex
+CREATE INDEX "stations_code_idx" ON "stations"("code");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "trains_trainNumber_key" ON "trains"("trainNumber");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "seats_trainId_seatNumber_key" ON "seats"("trainId", "seatNumber");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "routes_trainId_key" ON "routes"("trainId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "route_stations_routeId_sequenceNumber_key" ON "route_stations"("routeId", "sequenceNumber");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "route_stations_routeId_stationId_key" ON "route_stations"("routeId", "stationId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "schedules_trainId_departureDate_key" ON "schedules"("trainId", "departureDate");
+
+-- AddForeignKey
+ALTER TABLE "seats" ADD CONSTRAINT "seats_trainId_fkey" FOREIGN KEY ("trainId") REFERENCES "trains"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "routes" ADD CONSTRAINT "routes_trainId_fkey" FOREIGN KEY ("trainId") REFERENCES "trains"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "route_stations" ADD CONSTRAINT "route_stations_routeId_fkey" FOREIGN KEY ("routeId") REFERENCES "routes"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "route_stations" ADD CONSTRAINT "route_stations_stationId_fkey" FOREIGN KEY ("stationId") REFERENCES "stations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "schedules" ADD CONSTRAINT "schedules_trainId_fkey" FOREIGN KEY ("trainId") REFERENCES "trains"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+
+================================================
+FILE: admin-service/src/index.js
+================================================
+import "dotenv/config"
+import express from "express"
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
+
+import { config } from "./config/index.js";
+import { disconnectProducer } from "./config/kafka.js";
+
+import { corsMiddleware } from "./middlewares/cors.middleware.js";
+import { reqLogger } from "./middlewares/req.middleware.js";
+import logger from "./config/logger.js";
+import { errorHandler } from "./middlewares/error.middleware.js";
+
+import stationRoutes from "./routes/station.route.js"
+import trainRoutes from "./routes/train.route.js"
+
+const app = express();
+
+app.use(corsMiddleware);
+const helmetMiddleware =
+  /** @type {import("express").RequestHandler} */
+  (
+    /** @type {unknown} */
+    (
+      helmet({
+        crossOriginOpenerPolicy: false,
+        crossOriginEmbedderPolicy: false,
+      })
+    )
+  );
+
+app.use(helmetMiddleware);
+app.use(reqLogger);
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// Request logging
+app.use((req, res, next) => {
+     logger.info(`${req.method} ${req.path}`, {
+          ip: req.ip,
+          userAgent: req.get('user-agent')
+     });
+     next();
+});
+
+app.get("/", (req, res) => {
+     res.send("Hello from index.js of admin-service");
+})
+
+// Health check
+app.get('/health', (req, res) => {
+     res.status(200).json({
+          success: true,
+          message: 'Admin Service is healthy',
+          timestamp: new Date().toISOString()
+     });
+});
+
+// API Routes - All protected by auth middleware
+app.use("/stations", stationRoutes);
+app.use("/trains", trainRoutes);
+// app.use("/schedules", scheduleRoutes);
+
+// Error handler (must be last)
+app.use(errorHandler);
+
+const startServer = async () => {
+     try {
+          const server = app.listen(config.PORT, () => {
+               logger.info(
+                    `${config.SERVICE_NAME} is running on port ${config.PORT}`
+               );
+          });
+
+          // Graceful shutdown
+          const shutdown = async () => {
+               logger.info('Shutting down gracefully...');
+
+               server.close(async () => {
+                    await disconnectProducer();
+                    logger.info('Server closed');
+                    process.exit(0);
+               });
+          };
+
+          process.on('SIGTERM', shutdown);
+          process.on('SIGINT', shutdown);
+
+     } catch (error) {
+          logger.error('Failed to start server', error);
+          process.exit(1);
+     }
+};
+
+startServer();
+
+
+
+================================================
+FILE: admin-service/src/config/index.js
+================================================
+import packageJson from "../../package.json" with { type: "json" };
+export const config = {
+  PORT: Number(process.env.PORT) || 4003,
+  SERVICE_NAME: packageJson.name,
+  NODE_ENV: process.env.NODE_ENV || "development",
+  LOG_LEVEL: process.env.LOG_LEVEL || "info",
+  KAFKA_BROKER: process.env.KAFKA_BROKER,
+  KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
+  DATABASE_URL: process.env.DATABASE_URL,
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+
+  INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY,
+};
+
+
+
+================================================
+FILE: admin-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs";
+import { config } from "./index.js";
+import logger from "./logger.js";
+
+export const kafka = new Kafka({
+     clientId: config.KAFKA_CLIENT_ID,
+     brokers: [config.KAFKA_BROKER || 'localhost:9093'],
+     logLevel: logLevel.ERROR,
+     retry: {
+          initialRetryTime: 300,
+          retries: 8,
+          maxRetryTime: 30000,
+     },
+});
+
+export const producer = kafka.producer({
+     allowAutoTopicCreation: true,
+     transactionTimeout: 30000,
+     idempotent: true, 
+     maxInFlightRequests: 5,
+     retry: {
+          retries: 5,
+     },
+});
+
+let isConnected = false;
+
+export const connectProducer = async () => {
+     if (!isConnected) {
+          await producer.connect();
+          isConnected = true;
+          logger.info('Kafka producer connected');
+     }
+};
+
+export const disconnectProducer = async () => {
+     if (isConnected) {
+          await producer.disconnect();
+          isConnected = false;
+          logger.info('Kafka producer disconnected');
+     }
+};
+
+
+
+
+================================================
+FILE: admin-service/src/config/logger.js
+================================================
+import winston from "winston"
+import { config } from "./index.js";
+
+const logger = winston.createLogger({
+  level: config.LOG_LEVEL,
+  defaultMeta: { service: config.SERVICE_NAME },
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.printf(({level, message, timestamp, service}) =>{
+        return `[${timestamp}] [${level}] [${service}]: ${message}`
+      })
+  ),
+    transports:[new winston.transports.Console()]
+})
+
+export default logger;
+
+
+================================================
+FILE: admin-service/src/config/prisma.js
+================================================
+import { PrismaPg } from "@prisma/adapter-pg";
+import { config } from "./index.js";
+import  {PrismaClient}  from "@prisma/client";
+
+const connectionString = config.DATABASE_URL;
+
+const globalForPrisma = global
+if (!globalForPrisma.prisma) {
+  const adapter = new PrismaPg({ connectionString })
+
+  globalForPrisma.prisma = new PrismaClient({
+    adapter,
+    log:['error','warn']
+  })
+}
+const prisma = globalForPrisma.prisma
+
+export default prisma
+
+
+================================================
+FILE: admin-service/src/controllers/station.controller.js
+================================================
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { BadRequestError } from "../utils/error.js";
+import * as stationService from "../services/station.service.js"
+
+export const createStation = asyncHandler(async(req,res) => {
+  const { name, code, city, state } = req.body;
+  if (!name || !code || !city || !state) {
+           throw new BadRequestError('stationCode, stationName, city and state are required');
+      }
+  const station = await stationService.createStation({
+            code: code.toUpperCase(),
+            name,
+            city,
+            state
+       });
+  
+       res.status(201).json({
+            success: true,
+            message: 'Station Created Successfully',
+            data: station
+       })
+  })
+
+
+
+================================================
+FILE: admin-service/src/controllers/train.controller.js
+================================================
+import  * as trainService  from "../services/train.service.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { BadRequestError } from "../utils/error.js";
+
+export const createTrain = asyncHandler(async(req,res) => {
+  const { trainName, trainNumber, seats, coachName } = req.body;
+  if(!trainNumber || !trainName || !coachName || !seats){
+           throw new BadRequestError("trainNumber, trainName, and seats are required");
+      }
+ 
+      if(seats.length === 0){
+           throw new BadRequestError("Atleast one seat must be defined...")
+  }
+      const train = await trainService.createTrain({trainNumber, trainName, coachName, seats});
+          return res.status(201).json({
+               success: true,
+               message: "Train added successfully",
+               data: train
+          })
+})
+
+
+================================================
+FILE: admin-service/src/kafka/producer/admin.producer.js
+================================================
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+import { connectProducer, producer } from "../../config/kafka.js";
+import logger from "../../config/logger.js";
+
+class AdminProducer {
+  constructor() {
+    this.isInitialized = false;
+  }
+  async initialize() {
+    if (!this.isInitialized) {
+      await connectProducer();
+      this.isInitialized = true;
+    }
+  }
+  async sendMessage(topic, key, value) {
+    try {
+      await this.initialize();
+      const result = await producer.send({
+        topic,
+        messages: [
+          {
+            key: key || `${topic}-${Date.now()}`,
+            value: JSON.stringify(value),
+            timestamp: Date.now().toString(),
+          },
+        ],
+      });
+      logger.info(`Message sent to topic: ${topic}`, {
+        key,
+        partition: result[0].partition,
+        offset: result[0].offset,
+      });
+      return result;
+    } catch (error) {
+      logger.error(`Failed to send message to topic: ${topic}`, {
+        error: error instanceof Error ? error.message : String(error),
+        key,
+      });
+      throw error;
+    }
+  }
+
+  async publishStationCreated(station) {
+    return this.sendMessage(KAFKA_TOPICS.STATION_CREATED, `station-${station.id}`, {
+      eventType: 'STATION_CREATED',
+      data: station,
+      timestamp:new Date().toISOString()
+    })
+  }
+  async publishTrainCreated(trainData) {
+          return this.sendMessage(
+               KAFKA_TOPICS.TRAIN_CREATED,
+               `train-${trainData.id}`,
+               trainData
+          );
+     }
+
+     async publishRouteCreated(routeData) {
+          return this.sendMessage(
+               KAFKA_TOPICS.ROUTE_CREATED,
+               `route-${routeData.id}`,
+               routeData
+          );
+     }
+
+     async publishScheduleCreated(scheduleData) {
+          return this.sendMessage(
+               KAFKA_TOPICS.SCHEDULE_CREATED,
+               `schedule-${scheduleData.scheduleId}`,
+               scheduleData
+          );
+     }
+
+     async publishScheduleCancelled(schedule) {
+          return this.sendMessage(
+               KAFKA_TOPICS.SCHEDULE_CANCELLED,
+               `schedule-${schedule.id}`,
+               { eventType: 'SCHEDULE_CANCELLED', data: schedule, timestamp: new Date().toISOString() }
+          );
+     }
+}
+
+export const adminProducer = new AdminProducer();
+
+
+
+================================================
+FILE: admin-service/src/middlewares/cors.middleware.js
+================================================
+import cors from "cors"
+import { config } from "../config/index.js";
+
+const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []
+
+export const corsMiddleware = cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) {
+      callback(null,true)
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+       allowedHeaders: ['Content-Type', 'Authorization'],
+})
+
+
+
+
+================================================
+FILE: admin-service/src/middlewares/error.middleware.js
+================================================
+import { config } from "../config/index.js";
+import logger from "../config/logger.js";
+import { AppError } from "../utils/error.js";
+
+export const errorHandler = (err, req, res, next) => {
+  // Always log the full error internally
+  logger.error({
+    message: err?.message || "Unknown error",
+    stack: err?.stack,
+    code: err?.code,
+    path: req.path,
+    method: req.method,
+    // optional: userId if you attach it later
+  });
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+
+  // Prisma known errors (optional but useful)
+  if (err.code === "P2002") {
+    // Unique constraint violation
+    return res.status(409).json({
+      success: false,
+      error: "CONFLICT",
+      message: "Resource already exists",
+    });
+  }
+
+  if (err.code === "P2025") {
+    // Record not found
+    return res.status(404).json({
+      success: false,
+      error: "NOT_FOUND",
+      message: "Resource not found",
+    });
+  }
+
+  // Unexpected errors
+  const isDev = config.NODE_ENV === "development";
+
+  return res.status(500).json({
+    success: false,
+    error: "SERVER_ERROR",
+    message: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
+  });
+};
+
+
+
+================================================
+FILE: admin-service/src/middlewares/getUserContext.js
+================================================
+import { UnauthorizedError } from "../utils/error.js";
+
+export const  getUserContext=(req, res, next)=> {
+     const userId = req.headers['x-user-id'];
+
+     if (!userId) {
+          return next(
+               new UnauthorizedError('User context missing - must come through gateway')
+          );
+     }
+
+     req.user = { id: userId };
+     next();
+}
+
+
+
+
+================================================
+FILE: admin-service/src/middlewares/req.middleware.js
+================================================
+import logger from "../config/logger.js";
+
+export const reqLogger = (req, res, next) => {
+  logger.debug(`[${req.method}] ${req.originalUrl}`);
+  const start = Date.now()
+
+  res.on('finish', () => {
+           const duration = Date.now() - start;
+           logger.info(
+                `[${req.method}] ${req.originalUrl} - status: ${res.statusCode} - ${duration}ms`
+           );
+      });
+
+  next();
+   
+}
+
+
+================================================
+FILE: admin-service/src/routes/station.route.js
+================================================
+import express from 'express'
+import { getUserContext } from '../middlewares/getUserContext.js';
+import { createStation } from '../controllers/station.controller.js';
+
+const router = express.Router();
+
+// router.get("/station/internal/:stationId", internalAuth, getStationByIdInternal);
+
+// router.get("/station", getUserContext, getAllStations);
+// router.get("/station/:stationId", getUserContext, getStationById);
+router.post("/station", getUserContext, createStation);
+
+export default router
+
+
+
+================================================
+FILE: admin-service/src/routes/train.route.js
+================================================
+import express from 'express'
+import { getUserContext } from '../middlewares/getUserContext.js';
+import { createTrain } from '../controllers/train.controller.js';
+
+const router = express.Router();
+
+router.post("/train", getUserContext, createTrain);
+// router.get("/train", getUserContext, getAllTrains);
+// router.get("/train/:trainId", getUserContext, getTrainById);
+// router.post("/route", getUserContext, createRoute);
+
+export default router
+
+
+================================================
+FILE: admin-service/src/services/station.service.js
+================================================
+import logger from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { adminProducer } from "../kafka/producer/admin.producer.js";
+import { BadRequestError, ConflictError } from "../utils/error.js";
+
+export const createStation = async (data) => {
+  const existing = await prisma.station.findUnique({
+    where:{code:data.code}
+  })
+  if (existing) {
+           throw new ConflictError('Station code already exists');
+      }
+  const station = await prisma.station.create({
+    data
+  })
+  logger.info('Station Created', { id: station.id, code: station.code });
+
+  // Publish event - fire and forget (non-critical)
+  await adminProducer.publishStationCreated(station).catch((err => {
+    logger.error('Failed to publish station created event', { error: err.message });
+  }))
+   return station;
+}
+
+export const getAllStations = async(page,limit,search) => {
+  const skip = (page - 1) * limit;
+  
+}
+
+
+================================================
+FILE: admin-service/src/services/train.service.js
+================================================
+import logger from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { adminProducer } from "../kafka/producer/admin.producer.js";
+import { BadRequestError, ConflictError } from "../utils/error.js";
+
+export const createTrain = async (data) => {
+  const { trainNumber, trainName, coachName, seats } = data;
+  const existing = await prisma.train.findUnique({
+    where:{trainNumber}
+  })
+  if (existing) {
+     throw new ConflictError("Train with this number already exists");
+  }
+  const seatNumbers = seats.map((s) => s.seatNumber);
+  if (new Set(seatNumbers).size !== seatNumbers.length) {
+           throw new BadRequestError('Duplicate seat numbers found');
+      }
+  const train = await prisma.train.create({
+            data: {
+                 trainNumber,
+                 trainName,
+                 coachName: coachName || 'AC',
+                 totalSeats: seats.length,
+                 seats: {
+                      create: seats.map((seat) => ({
+                           seatNumber: seat.seatNumber,
+                           seatType: seat.seatType,
+                           price: seat.price
+                      }))
+                 }
+            },
+            include: { seats: { orderBy: { seatNumber: 'asc' } } }
+       })
+
+  await adminProducer.publishTrainCreated(train).catch((err) => {
+            logger.error('Failed to publish train created event', { error: err.message });
+       });
+  
+       return train;
+}
+
+
+================================================
+FILE: admin-service/src/utils/asyncHandler.js
+================================================
+export const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+
+
+================================================
+FILE: admin-service/src/utils/error.js
+================================================
+export class AppError extends Error {
+     constructor(message, statusCode, code) {
+          super(message);
+          this.statusCode = statusCode;
+          this.code = code; // custom error code
+          Error.captureStackTrace(this, this.constructor);
+     }
+}
+
+export class BadRequestError extends AppError {
+     constructor(message, code = 'BAD_REQUEST') {
+          super(message, 400, code);
+     }
+}
+
+export class UnauthorizedError extends AppError {
+     constructor(message, code = 'UNAUTHORIZED') {
+          super(message, 401, code);
+     }
+}
+
+export class ForbiddenError extends AppError {
+     constructor(message, code = 'FORBIDDEN') {
+          super(message, 403, code);
+     }
+}
+
+export class NotFoundError extends AppError {
+     constructor(message, code = 'NOT_FOUND') {
+          super(message, 404, code);
+     }
+}
+
+export class ConflictError extends AppError {
+     constructor(message, code = 'CONFLICT') {
+          super(message, 409, code);
+     }
+}
+
+export class TooManyRequestsError extends AppError {
+     constructor(message, code = 'TOO_MANY_REQUESTS') {
+          super(message, 429, code);
+     }
+}
+
+export class InternalServerError extends AppError {
+     constructor(message = 'Internal Server Error', code = 'SERVER_ERROR') {
+          super(message, 500, code);
+     }
+}
+
+
+
+================================================
+FILE: api-gateway/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js", "../shared/constants/constants.js"]
+}
+
+
+
+================================================
+FILE: api-gateway/package.json
+================================================
+{
+  "name": "api-gateway",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "axios": "^1.13.4",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.9.2",
+    "jsonwebtoken": "^9.0.3",
+    "morgan": "^1.10.1",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
+
+
+================================================
+FILE: api-gateway/.env.example
+================================================
+PORT=4000
+NODE_ENV=development
+
+ALLOWED_ORIGINS=http://localhost:3000
+REDIS_URL=redis://:your-password@localhost:6379
+
+JWT_ACCESS_SECRET=your_access_secret
+JWT_REFRESH_SECRET=your_refresh_secret
+ACCESS_TOKEN_EXP=15m
+REFRESH_TOKEN_EXP=7d
+ACCESS_TOKEN_EXP_SEC=900
+REFRESH_TOKEN_EXP_SEC=604800
+
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+USER_SERVICE_URL=http://localhost:4001
+SEARCH_SERVICE_URL=http://localhost:4002
+BOOKING_SERVICE_URL=http://localhost:4003
+NOTIFICATION_SERVICE_URL=http://localhost:4004
+PAYMENT_SERVICE_URL=http://localhost:4005
+
+SERVICE_TIMEOUT_MS=60000
+CIRCUIT_BREAKER_THRESHOLD=5
+CIRCUIT_BREAKER_TIMEOUT=60000
+
+
+================================================
+FILE: api-gateway/src/index.js
+================================================
+import express from 'express'
+import helmet from 'helmet'
+import { corsMiddleware } from './middlewares/cors.middleware.js';
+import { reqLogger } from './middlewares/req.middleware.js';
+import cookieParser from 'cookie-parser';
+import { config } from './config/index.js';
+import routes from "./routes/index.js"
+import { notFound } from './middlewares/notFound.middleware.js';
+import { errorHandler } from './middlewares/error.middleware.js';
+import { logger } from './config/logger.js';
+
+
+const app = express();
+app.use(corsMiddleware)
+app.use(helmet({
+  crossOriginOpenerPolicy: false,
+  crossOriginEmbedderPolicy:false
+}))
+app.use(reqLogger);
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(cookieParser());
+
+app.get('/health', (req, res) => {
+     res.status(200).json({
+          success: true,
+          message: 'API Gateway is running',
+          timestamp: new Date().toISOString(),
+          environment: config.NODE_ENV,
+     });
+});
+
+app.use('/api', routes);
+
+app.use(notFound);
+app.use(errorHandler);
+
+const gracefulShutdown = () => {
+     logger.info('Received shutdown signal, closing server gracefully...');
+     server.close(() => {
+          logger.info('Server closed');
+          process.exit(0);
+     });
+
+     setTimeout(() => {
+          logger.error('Forced shutdown after timeout');
+          process.exit(1);
+     }, 30000);
+};
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+const server = app.listen(config.PORT, () => {
+     logger.info(`ðŸš€ API Gateway running on port ${config.PORT} in ${config.NODE_ENV} mode`);
+});
+
+process.on('unhandledRejection', (err) => {
+     logger.error('Unhandled Rejection:', err);
+     server.close(() => process.exit(1));
+});
+
+
+
+================================================
+FILE: api-gateway/src/config/index.js
+================================================
+import "dotenv/config"
+import packageJson from "../../package.json" with { type: "json" };
+
+export const config = {
+  PORT: process.env.PORT || 4000,
+  SERVICE_NAME: packageJson.name,
+  NODE_ENV: process.env.NODE_ENV || "development",
+
+  REDIS_URL: process.env.REDIS_URL,
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS || "http://localhost:3000",
+
+  JWT_ACCESS_SECRET:
+    process.env.JWT_ACCESS_SECRET ||
+    "0f8bf908f8d38527c188c93bda49d48bd421a43fa0bdf3e77de1f0db785e6f37",
+  JWT_REFRESH_SECRET:
+    process.env.JWT_REFRESH_SECRET ||
+    "826d2c0edb5ad8f8ac7668556c034ea228931a49576aefccc80d6f469cc4a34c4da82ca43a5c43de91ffdad2f4644c655e2eb3ccbb8bc2848cb64fe7ea2a1ab9",
+  ACCESS_TOKEN_EXP: process.env.ACCESS_TOKEN_EXP,
+  REFRESH_TOKEN_EXP: process.env.REFRESH_TOKEN_EXP,
+  ACCESS_TOKEN_EXP_SEC: parseInt(process.env.ACCESS_TOKEN_EXP_SEC || "900", 10),
+  REFRESH_TOKEN_EXP_SEC: parseInt(
+    process.env.REFRESH_TOKEN_EXP_SEC || "604800",
+    10,
+  ),
+
+  RATE_LIMIT_WINDOW_MS: parseInt(
+    process.env.RATE_LIMIT_WINDOW_MS || "900000",
+    10,
+  ),
+  RATE_LIMIT_MAX_REQUESTS: parseInt(
+    process.env.RATE_LIMIT_MAX_REQUESTS || "100",
+    10,
+  ),
+
+  SERVICES: {
+    USER_SERVICE_URL: process.env.USER_SERVICE_URL || "http://localhost:4001",
+    SEARCH_SERVICE_URL:
+      process.env.SEARCH_SERVICE_URL || "http://localhost:4002",
+    ADMIN_SERVICE_URL: process.env.ADMIN_SERVICE_URL || "http://localhost:4003",
+    NOTIFICATION_SERVICE_URL:
+      process.env.NOTIFICATION_SERVICE_URL || "http://localhost:4004",
+    BOOKING_SERVICE_URL:
+      process.env.BOOKING_SERVICE_URL || "http://localhost:4005",
+    PAYMENT_SERVICE_URL:
+      process.env.PAYMENT_SERVICE_URL || "http://localhost:4006",
+    INVENTORY_SERVICE_URL:
+      process.env.INVENTORY_SERVICE_URL || "http://localhost:4007",
+  },
+
+  SERVICE_TIMEOUT_MS: parseInt(process.env.SERVICE_TIMEOUT_MS || "60000", 10),
+
+  CIRCUIT_BREAKER_THRESHOLD: parseInt(
+    process.env.CIRCUIT_BREAKER_THRESHOLD || "5",
+    10,
+  ),
+  CIRCUIT_BREAKER_TIMEOUT: parseInt(
+    process.env.CIRCUIT_BREAKER_TIMEOUT || "60000",
+    10,
+  ),
+};
+
+const requiredConfig = ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"];
+
+requiredConfig.forEach((key) => {
+  if (!config[key]) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+});
+
+
+
+================================================
+FILE: api-gateway/src/config/logger.js
+================================================
+import winston from "winston";
+import { config } from "./index.js";
+
+export const logger = winston.createLogger({
+     level: config.LOG_LEVEL,
+     defaultMeta: {service: config.SERVICE_NAME},
+     format: winston.format.combine(
+          winston.format.timestamp(),
+          winston.format.printf(({level, message, timestamp, service}) =>{
+               return `[${timestamp}] [${level}] [${service}]: ${message}`
+          })
+     ),
+     transports: [new winston.transports.Console()]
+})
+
+
+
+================================================
+FILE: api-gateway/src/config/redis.js
+================================================
+import {Redis} from "ioredis";
+import { config } from "./index.js";
+import {logger} from "./logger.js";
+
+class RedisClient {
+  static instance;
+  static isConnected = false;
+
+  constructor() {
+    // Prevent direct instantiation.
+  }
+
+  static getInstance() {
+    if (!RedisClient.instance) {
+      const redisUrl = config.REDIS_URL;
+
+      if (!redisUrl) {
+        throw new Error("REDIS_URL is not defined in the configuration.");
+      }
+
+      RedisClient.instance = new Redis(redisUrl, {
+        retryStrategy: (times) => {
+          const delay = Math.min(times * 500, 5000);
+
+          logger.warn(
+            `Redis reconnect attempt ${times}. Retrying in ${delay}ms...`,
+          );
+
+          return delay;
+        },
+
+        maxRetriesPerRequest: 3,
+
+        // Don't keep trying forever after an authentication failure.
+        enableReadyCheck: true,
+      });
+
+      RedisClient.setupEventListeners();
+    }
+
+    return RedisClient.instance;
+  }
+
+  static setupEventListeners() {
+    const client = RedisClient.instance;
+
+    if (!client) {
+      return;
+    }
+
+    client.on("connect", () => {
+      logger.info("Redis TCP connection established");
+    });
+
+    client.on("ready", () => {
+      RedisClient.isConnected = true;
+      logger.info("Redis client is ready");
+    });
+
+    client.on("error", (error) => {
+      RedisClient.isConnected = false;
+
+      logger.error(`Redis connection error: ${error.message}`);
+    });
+
+    client.on("close", () => {
+      RedisClient.isConnected = false;
+      logger.warn("Redis connection closed");
+    });
+
+    client.on("reconnecting", () => {
+      RedisClient.isConnected = false;
+      logger.warn("Reconnecting to Redis...");
+    });
+
+    client.on("end", () => {
+      RedisClient.isConnected = false;
+      logger.warn("Redis connection ended");
+    });
+  }
+
+  static isReady() {
+    return RedisClient.isConnected;
+  }
+
+  static async testConnection() {
+    try {
+      const client = RedisClient.getInstance();
+
+      const response = await client.ping();
+
+      if (response === "PONG") {
+        logger.info("Redis ping successful");
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      logger.error(
+        `Redis connection test failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      return false;
+    }
+  }
+
+  static async closeConnection() {
+    const client = RedisClient.instance;
+
+    if (!client) {
+      return;
+    }
+
+    try {
+      await client.quit();
+
+      RedisClient.instance = null;
+      RedisClient.isConnected = false;
+
+      logger.info("Redis connection closed gracefully");
+    } catch (error) {
+      logger.error(
+        `Error closing Redis connection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      client.disconnect();
+
+      RedisClient.instance = null;
+      RedisClient.isConnected = false;
+    }
+  }
+}
+
+export const redis = RedisClient.getInstance();
+
+export default RedisClient;
+
+
+
+================================================
+FILE: api-gateway/src/middlewares/auth.middleware.js
+================================================
+import jwt from "jsonwebtoken";
+import { UnauthorizedError } from "../utils/error.js";
+import { config } from "../config/index.js";
+
+export const requireAuth = (req, res, next) => {
+  try {
+    let accessToken;
+    // 1. Try Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      accessToken = authHeader.split(" ")[1];
+    }
+    // 2. Fall back to httpOnly cookie (browser clients)
+    if (!accessToken && req.cookies) {
+      accessToken = req.cookies.accessToken;
+    }
+    if (!accessToken) {
+      throw new UnauthorizedError("Authorization token missing");
+    }
+    // Verify access token
+
+    const payload = jwt.verify(accessToken, config.JWT_ACCESS_SECRET);
+
+    // jwt.verify() => string | JwtPayload
+    if (typeof payload === "string") {
+      throw new UnauthorizedError("Invalid token payload", "TOKEN_INVALID");
+    }
+
+    // Now payload is JwtPayload
+    if (!payload.id || typeof payload.id !== "string") {
+      throw new UnauthorizedError("Invalid token payload", "TOKEN_INVALID");
+    }
+
+    // Attach user context to request for downstream services
+    req.user = {
+      id: payload.id,
+    };
+    
+    // Add user ID to headers for proxied requests
+    req.headers['x-user-id'] = payload.id.toString();
+     next();
+  } catch (err) {
+    if (err instanceof jwt.TokenExpiredError) {
+      return next(
+        new UnauthorizedError("Access token expired", "TOKEN_EXPIRED"),
+      );
+    }
+
+    if (err instanceof jwt.JsonWebTokenError) {
+      return next(
+        new UnauthorizedError("Invalid access token", "TOKEN_INVALID"),
+      );
+    }
+    return next(err);
+  }
+}
+
+
+
+================================================
+FILE: api-gateway/src/middlewares/cors.middleware.js
+================================================
+import cors from "cors"
+import { config } from "../config/index.js";
+
+const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []
+
+export const corsMiddleware = cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) {
+      callback(null,true)
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+       allowedHeaders: ['Content-Type', 'Authorization'],
+})
+
+
+
+
+================================================
+FILE: api-gateway/src/middlewares/error.middleware.js
+================================================
+import { config } from "../config/index.js";
+import {logger} from "../config/logger.js";
+import { AppError } from "../utils/error.js";
+
+export const errorHandler = (err, req, res, next) => {
+  // Always log the full error internally
+  logger.error({
+    message: err?.message || "Unknown error",
+    stack: err?.stack,
+    code: err?.code,
+    path: req.path,
+    method: req.method,
+    // optional: userId if you attach it later
+  });
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+
+  // Prisma known errors (optional but useful)
+  if (err.code === "P2002") {
+    // Unique constraint violation
+    return res.status(409).json({
+      success: false,
+      error: "CONFLICT",
+      message: "Resource already exists",
+    });
+  }
+
+  if (err.code === "P2025") {
+    // Record not found
+    return res.status(404).json({
+      success: false,
+      error: "NOT_FOUND",
+      message: "Resource not found",
+    });
+  }
+
+  // Unexpected errors
+  const isDev = config.NODE_ENV === "development";
+
+  return res.status(500).json({
+    success: false,
+    error: "SERVER_ERROR",
+    message: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
+  });
+};
+
+
+
+================================================
+FILE: api-gateway/src/middlewares/notFound.middleware.js
+================================================
+import { NotFoundError } from "../utils/error.js";
+
+export const notFound = (req,res,next) => {
+  next(new NotFoundError(`Route ${req.method} ${req.path} not found`))
+}
+
+
+================================================
+FILE: api-gateway/src/middlewares/rateLimit.middleware.js
+================================================
+
+/**
+ * Rate limiting strategies:
+ * 1. IP-based rate limiting (for unauthenticated users)
+ * 2. User-based rate limiting (for authenticated users)
+ * 3. Endpoint-specific rate limiting
+ */
+
+import { config } from "../config/index.js";
+import { logger } from "../config/logger.js";
+import { redis } from "../config/redis.js";
+import { TooManyRequestsError } from "../utils/error.js";
+
+
+/**
+ * Generic rate limiter using sliding window algorithm
+**/
+export async function rateLimiter(key, maxRequests, windowMs) {
+     const now = Date.now();
+     const windowStart = now - windowMs;
+
+     try {
+          // Use Redis pipeline for atomic operations
+          const pipeline = redis.pipeline();
+
+          // Remove old entries outside the current window
+          pipeline.zremrangebyscore(key, 0, windowStart);
+
+          // Add current request
+          pipeline.zadd(key, now, `${now}-${Math.random()}`);
+
+          // Count requests in current window
+          pipeline.zcard(key);
+
+          // Set expiry on the key
+          pipeline.expire(key, Math.ceil(windowMs / 1000));
+
+          const results = await pipeline.exec();
+          
+          if (!results) {
+            throw new Error("Redis pipeline execution failed");
+          }
+          // Get the count from the third command (index 2)
+
+          const requestCount = results[2]?.[1];
+          
+          if (typeof requestCount !== "number") {
+            throw new Error("Invalid Redis ZCARD result");
+          };
+
+
+          if (requestCount > maxRequests) {
+               const oldestRequest = await redis.zrange(key, 0, 0, 'WITHSCORES');
+               const resetTime = parseInt(oldestRequest[1]) + windowMs;
+               const retryAfter = Math.ceil((resetTime - now) / 1000);
+
+               return {
+                    allowed: false,
+                    remaining: 0,
+                    resetTime,
+                    retryAfter,
+               };
+          }
+
+          return {
+               allowed: true,
+               remaining: maxRequests - requestCount,
+               resetTime: windowStart + windowMs,
+          };
+     } catch (err) {
+          logger.error('Rate limiter error:', err);
+          // Fail open - allow request if Redis is down
+          return { allowed: true, remaining: maxRequests };
+     }
+}
+
+/**
+ * IP-based rate limiting middleware
+ * Default: 100 requests per 15 minutes
+ */
+export function ipRateLimit(options = {}) {
+     const maxRequests = options.max || config.RATE_LIMIT_MAX_REQUESTS;
+     const windowMs = options.windowMs || config.RATE_LIMIT_WINDOW_MS;
+
+     return async (req, res, next) => {
+          const ip = req.ip || req.connection.remoteAddress;
+          const key = `ratelimit:ip:${ip}`;
+
+          const result = await rateLimiter(key, maxRequests, windowMs);
+
+          // Set rate limit headers
+          res.setHeader('X-RateLimit-Limit', maxRequests);
+          res.setHeader('X-RateLimit-Remaining', result.remaining);
+          res.setHeader('X-RateLimit-Reset', new Date(result.resetTime).toISOString());
+
+          if (!result.allowed) {
+               res.setHeader('Retry-After', result.retryAfter);
+               logger.warn(`Rate limit exceeded for IP: ${ip}`);
+               return next(
+                    new TooManyRequestsError(
+                         `Too many requests. Please try again in ${result.retryAfter} seconds`
+                        
+                    )
+               );
+          }
+
+          next();
+     };
+}
+
+/**
+ * User-based rate limiting middleware
+ * Should be used after authentication middleware
+ * Default: 1000 requests per 15 minutes (more lenient than IP-based)
+**/
+export function userRateLimit(options = {}) {
+     const maxRequests = options.max || config.RATE_LIMIT_MAX_REQUESTS * 10;
+     const windowMs = options.windowMs || config.RATE_LIMIT_WINDOW_MS;
+
+     return async (req, res, next) => {
+          // Skip if no user authenticated
+          if (!req.user || !req.user.id) {
+               return next();
+          }
+
+          const userId = req.user.id;
+          const key = `ratelimit:user:${userId}`;
+
+          const result = await rateLimiter(key, maxRequests, windowMs);
+
+          res.setHeader('X-RateLimit-Limit', maxRequests);
+          res.setHeader('X-RateLimit-Remaining', result.remaining);
+          res.setHeader('X-RateLimit-Reset', new Date(result.resetTime).toISOString());
+
+          if (!result.allowed) {
+               res.setHeader('Retry-After', result.retryAfter);
+               logger.warn(`Rate limit exceeded for user: ${userId}`);
+               return next(
+                    new TooManyRequestsError(
+                         `Too many requests. Please try again in ${result.retryAfter} seconds`
+                        
+                    )
+               );
+          }
+
+          next();
+     };
+}
+
+/**
+ * Endpoint-specific rate limiting
+ * Example: POST /api/auth/send-otp - 5 requests per hour
+**/
+export function endpointRateLimit(maxRequests, windowMs) {
+     return async (req, res, next) => {
+          const ip = req.ip || req.connection.remoteAddress;
+          const endpoint = `${req.method}:${req.path}`;
+          const key = `ratelimit:endpoint:${endpoint}:${ip}`;
+
+          const result = await rateLimiter(key, maxRequests, windowMs);
+
+          res.setHeader('X-RateLimit-Limit', maxRequests);
+          res.setHeader('X-RateLimit-Remaining', result.remaining);
+          res.setHeader('X-RateLimit-Reset', new Date(result.resetTime).toISOString());
+
+          if (!result.allowed) {
+               res.setHeader('Retry-After', result.retryAfter);
+               logger.warn(`Endpoint rate limit exceeded for ${endpoint} from IP: ${ip}`);
+               return next(
+                    new TooManyRequestsError(
+                         `Too many requests to this endpoint. Please try again in ${result.retryAfter} seconds`
+                        
+                    )
+               );
+          }
+
+          next();
+     };
+}
+
+/**
+ * Combined rate limiting strategy
+ * Applies both IP and user-based rate limiting
+**/
+export function combinedRateLimit(ipOptions = {}, userOptions = {}) {
+     const ipLimiter = ipRateLimit(ipOptions);
+     const userLimiter = userRateLimit(userOptions);
+
+     return async (req, res, next) => {
+          // Apply IP rate limit first
+          ipLimiter(req, res, (err) => {
+               if (err) return next(err);
+
+               // Then apply user rate limit if authenticated
+               userLimiter(req, res, next);
+          });
+     };
+}
+
+
+
+
+================================================
+FILE: api-gateway/src/middlewares/req.middleware.js
+================================================
+import {logger} from "../config/logger.js";
+
+export const reqLogger = (req, res, next) => {
+  logger.debug(`[${req.method}] ${req.originalUrl}`);
+  const start = Date.now()
+
+  res.on('finish', () => {
+           const duration = Date.now() - start;
+           logger.info(
+                `[${req.method}] ${req.originalUrl} - status: ${res.statusCode} - ${duration}ms`
+           );
+      });
+
+  next();
+   
+}
+
+
+================================================
+FILE: api-gateway/src/routes/index.js
+================================================
+import express from "express";
+import { createProxy, getCircuitBreakerStatus } from "../services/proxy.js";
+import { config } from "../config/index.js";
+import { combinedRateLimit, endpointRateLimit } from "../middlewares/rateLimit.middleware.js";
+import { requireAuth } from "../middlewares/auth.middleware.js";
+const router = express.Router();
+
+/**
+ * USER SERVICE ROUTES
+ * Gateway Path: /api/users/auth/login
+ * Service Path: /auth/login
+**/
+
+const userServiceProxy = createProxy('userService', config.SERVICES.USER_SERVICE_URL);
+
+// public routes
+router.post(
+     '/users/auth/send-otp',
+     endpointRateLimit(5, 3600000), // 5 requests per hour
+     userServiceProxy
+);
+
+router.post(
+     '/users/auth/verify-otp',
+     endpointRateLimit(10, 3600000), // 10 requests per hour
+     userServiceProxy
+);
+
+router.post(
+     '/users/auth/login',
+     endpointRateLimit(100, 900000),// 100 requests per 15 minutes
+     userServiceProxy
+);
+
+router.post(
+     '/users/auth/google-auth',
+     endpointRateLimit(10, 900000), // 10 requests per 15 minutes
+     userServiceProxy
+);
+
+router.post(
+     '/users/auth/refresh',
+     endpointRateLimit(20, 900000), // 20 requests per 15 minutes
+     userServiceProxy
+);
+
+// private routes
+router.get(
+     '/users/user/profile',
+     requireAuth,
+     combinedRateLimit(),
+     userServiceProxy
+)
+
+router.put(
+     '/users/user/profile',
+     requireAuth,
+     combinedRateLimit(),
+     userServiceProxy
+)
+
+router.delete(
+     '/users/user/profile',
+     requireAuth,
+     combinedRateLimit(),
+     userServiceProxy
+)
+
+const adminServiceProxy = createProxy('adminService', config.SERVICES.ADMIN_SERVICE_URL);
+
+router.post(
+     '/admins/stations/station',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+);
+
+router.post(
+     '/admins/trains/train',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+);
+
+router.post(
+     '/admins/trains/route',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+
+router.post(
+     '/admins/schedules/schedule',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+
+router.get(
+     '/admins/stations/station',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+
+router.get(
+     '/admins/trains/train/:trainId',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+);
+
+router.put(
+     '/admins/schedules/schedule/:scheduleId',
+     requireAuth,
+     combinedRateLimit(),
+     adminServiceProxy
+)
+// ===========================
+// SEARCH SERVICE ROUTES (public - no auth required)
+// ===========================
+const searchServiceProxy = createProxy('searchService', config.SERVICES.SEARCH_SERVICE_URL);
+
+router.get(
+     '/search/trains',
+     endpointRateLimit(60, 60000), // 60 requests per minute
+     searchServiceProxy
+);
+
+router.get(
+     '/search/autocomplete',
+     endpointRateLimit(120, 60000), // 120 requests per minute
+     searchServiceProxy
+);
+
+// ===========================
+// INVENTORY SERVICE ROUTES (public read-only)
+// ===========================
+const inventoryServiceProxy = createProxy('inventoryService', config.SERVICES.INVENTORY_SERVICE_URL);
+
+// Public: aggregate availability (used by search results)
+router.get(
+     '/inventory/schedules/:scheduleId/availability',
+     endpointRateLimit(120, 60000), // 120 requests per minute
+     inventoryServiceProxy
+);
+
+// Authenticated: individual seat statuses
+router.get(
+     '/inventory/schedules/:scheduleId/seats',
+     requireAuth,
+     combinedRateLimit(),
+     inventoryServiceProxy
+);
+
+// Note: lock/unlock/confirm/cancel-booking are now internal-only
+// (called by booking-service directly, not through the gateway)
+
+// ===========================
+// BOOKING SERVICE ROUTES
+// ===========================
+const bookingServiceProxy = createProxy('bookingService', config.SERVICES.BOOKING_SERVICE_URL);
+
+router.post(
+     '/bookings/bookings',
+     requireAuth,
+     endpointRateLimit(5, 60000), // 5 booking attempts per minute
+     bookingServiceProxy
+);
+
+router.get(
+     '/bookings/bookings',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+router.get(
+     '/bookings/bookings/:bookingId',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+router.post(
+     '/bookings/bookings/:bookingId/verify-payment',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+router.post(
+     '/bookings/bookings/:bookingId/cancel',
+     requireAuth,
+     combinedRateLimit(),
+     bookingServiceProxy
+);
+
+// ===========================
+// PAYMENT SERVICE ROUTES (webhook only - public)
+// ===========================
+const paymentServiceProxy = createProxy('paymentService', config.SERVICES.PAYMENT_SERVICE_URL);
+
+// Razorpay webhook (public â€” no auth, signature-verified by payment-service)
+router.post(
+     '/payments/webhooks/razorpay',
+     paymentServiceProxy
+);
+
+// Gateway Health Status
+
+router.get('/gateway/health', (req, res) => {
+     res.status(200).json({
+          success: true,
+          message: "API Gateway is healthy",
+          timestamp: new Date().toISOString()
+     });
+});
+
+router.get('/gateway/circuit-breakers', (req, res) => {
+     const status = getCircuitBreakerStatus();
+     res.status(200).json({
+          success: true,
+          circuitBreakers: status,
+     });
+});
+
+export default router;
+
+
+================================================
+FILE: api-gateway/src/services/proxy.js
+================================================
+/**
+ * Circuit Breaker implementation
+ * Prevents cascading failures when downstream services are down
+ */
+
+import { config } from "../config/index.js";
+import { logger } from "../config/logger.js";
+import {
+  GatewayTimeoutError,
+  ServiceUnavailableError,
+} from "../utils/error.js";
+import axios from "axios";
+
+class CircuitBreaker {
+  constructor(
+    serviceName,
+    threshold = config.CIRCUIT_BREAKER_THRESHOLD,
+    timeout = config.CIRCUIT_BREAKER_TIMEOUT,
+  ) {
+    this.serviceName = serviceName;
+    this.failureCount = 0;
+    this.threshold = threshold;
+    this.timeout = timeout;
+    this.state = "CLOSED"; // CLOSED, OPEN, HALF_OPEN
+    this.nextAttempt = Date.now();
+  }
+
+  async execute(request) {
+    if (this.state === "OPEN") {
+      if (Date.now() < this.nextAttempt) {
+        throw new ServiceUnavailableError(
+          `Service ${this.serviceName} is temporarily unavailable. Circuit breaker is OPEN.`,
+        );
+      }
+      // Try to close the circuit
+      this.state = "HALF_OPEN";
+      logger.info(`Circuit breaker HALF_OPEN for ${this.serviceName}`);
+    }
+    try {
+      const response = await request();
+      this.onSuccess();
+      return response;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+  onSuccess() {
+    this.failureCount = 0;
+    if (this.state === "HALF_OPEN") {
+      this.state = "CLOSED";
+      logger.info(`Circuit breaker CLOSED for ${this.serviceName}`);
+    }
+  }
+  onFailure() {
+    this.failureCount++;
+    if (this.failureCount > this.threshold) {
+      this.state = "OPEN";
+      this.nextAttempt = Date.now() + this.timeout;
+      logger.error(
+        `Circuit breaker OPEN for ${this.serviceName}. Next attempt at ${new Date(this.nextAttempt).toISOString()}`,
+      );
+    }
+  }
+  getState() {
+    return {
+      service: this.serviceName,
+      state: this.state,
+      failureCount: this.failureCount,
+      nextAttempt:
+        this.state === "OPEN" ? new Date(this.nextAttempt).toISOString() : null,
+    };
+  }
+}
+
+// Circuit breakers for each service
+export const circuitBreakers = {
+  userService: new CircuitBreaker("user-service"),
+  searchService: new CircuitBreaker("search-service"),
+  adminService: new CircuitBreaker("admin-service"),
+  notificationService: new CircuitBreaker("notification-service"),
+  bookingService: new CircuitBreaker("booking-service"),
+  paymentService: new CircuitBreaker("payment-service"),
+  inventoryService: new CircuitBreaker("inventory-service"),
+};
+
+/**
+ * Forward request to downstream service
+ */
+export async function forwardRequest(
+  serviceUrl,
+  path,
+  method,
+  data,
+  headers,
+  circuitBreaker,
+) {
+  const url = `${serviceUrl}${path}`;
+  logger.info(url);
+  // http://localhost:4001/auth/login
+  const requestConfig = {
+    method,
+    url,
+    timeout: config.SERVICE_TIMEOUT_MS,
+    headers: {
+      ...headers,
+      // Remove host header to avoid conflicts
+      host: undefined,
+      // Remove content-length to let axios recalculate
+      "content-length": undefined,
+    },
+    // Important: Don't validate status, let service response through
+    validateStatus: () => true,
+    // Set max redirects
+    maxRedirects: 5,
+  };
+
+  // Add data based on method
+  if (method !== "GET" && method !== "DELETE" && data) {
+    requestConfig.data = data;
+  }
+
+  // For GET and DELETE, add params if data exists
+  if ((method === "GET" || method === "DELETE") && data) {
+    requestConfig.params = data;
+  }
+
+  logger.debug(`Forwarding ${method} ${url}`, {
+    headers: requestConfig.headers,
+    hasData: !!data,
+    timeout: config.SERVICE_TIMEOUT_MS,
+  });
+
+  try {
+    const response = await circuitBreaker.execute(() => axios(requestConfig));
+
+    logger.debug(`Response from ${url}:`, {
+      status: response.status,
+      statusText: response.statusText,
+    });
+
+    return {
+      status: response.status,
+      data: response.data,
+      headers: response.headers,
+    };
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      logger.error(`Error forwarding to ${serviceUrl}:`, {
+        message: err.message,
+        code: err.code,
+        url,
+        method,
+        timeout: config.SERVICE_TIMEOUT_MS,
+      });
+
+      if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
+        throw new GatewayTimeoutError(
+          `Request to ${serviceUrl} timed out after ${config.SERVICE_TIMEOUT_MS}ms`,
+        );
+      }
+
+      if (err.code === "ECONNREFUSED") {
+        throw new ServiceUnavailableError(
+          `Cannot connect to ${serviceUrl}. Service may be down.`,
+        );
+      }
+
+      if (err.response) {
+        logger.error(`Service error from ${serviceUrl}:`, {
+          status: err.response.status,
+          data: err.response.data,
+        });
+
+        return {
+          status: err.response.status,
+          data: err.response.data,
+          headers: err.response.headers,
+        };
+      }
+    }
+    // Non-Axios error
+    // Network error or service down--You would have seen this in video
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error(`Unexpected error forwarding to ${serviceUrl}:`, {
+      message,
+      url,
+      method,
+    });
+    throw new ServiceUnavailableError(
+      `Service temporarily unavailable: ${message}`,
+    );
+  }
+}
+
+/**
+ * Proxy middleware factory
+ */
+export function createProxy(serviceName, serviceUrl) {
+  const circuitBreaker = circuitBreakers[serviceName];
+
+  if (!circuitBreaker) {
+    throw new Error(`No circuit breaker found for service: ${serviceName}`);
+  }
+
+  return async (req, res, next) => {
+    try {
+      // Extract path (remove /api prefix only)
+      // Gateway: /api/users/auth/login -> Service: /auth/login
+      // Gateway: /api/users/user/profile -> Service: /user/profile
+      logger.info(req.path);
+      const pathParts = req.path.split("/").filter(Boolean);
+      logger.info(pathParts);
+      // Remove 'users' (first part), keep the rest
+      // ['users', 'auth', 'login'] -> ['auth', 'login'] -> '/auth/login'
+      const servicePath = "/" + pathParts.slice(1).join("/");
+      logger.info(servicePath);
+
+      const result = await forwardRequest(
+        serviceUrl,
+        servicePath +
+          (req.url.includes("?")
+            ? req.url.substring(req.url.indexOf("?"))
+            : ""),
+        req.method,
+        req.body,
+        req.headers,
+        circuitBreaker,
+      );
+
+      // Forward response headers (except some)
+      const excludeHeaders = [
+        "connection",
+        "keep-alive",
+        "transfer-encoding",
+        "host",
+      ];
+      Object.keys(result.headers).forEach((key) => {
+        if (!excludeHeaders.includes(key.toLowerCase())) {
+          res.setHeader(key, result.headers[key]);
+        }
+      });
+
+      // Send response
+      res.status(result.status).json(result.data);
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+/**
+ * Health check endpoint for circuit breakers
+ */
+export function getCircuitBreakerStatus() {
+  return Object.values(circuitBreakers).map((cb) => cb.getState());
+}
+
+
+
+================================================
+FILE: api-gateway/src/utils/error.js
+================================================
+export class AppError extends Error {
+     constructor(message, statusCode, code) {
+          super(message);
+          this.statusCode = statusCode;
+          this.code = code; // custom error code
+          Error.captureStackTrace(this, this.constructor);
+     }
+}
+
+export class BadRequestError extends AppError {
+     constructor(message, code = 'BAD_REQUEST') {
+          super(message, 400, code);
+     }
+}
+
+export class UnauthorizedError extends AppError {
+     constructor(message, code = 'UNAUTHORIZED') {
+          super(message, 401, code);
+     }
+}
+
+export class ForbiddenError extends AppError {
+     constructor(message, code = 'FORBIDDEN') {
+          super(message, 403, code);
+     }
+}
+
+export class NotFoundError extends AppError {
+     constructor(message, code = 'NOT_FOUND') {
+          super(message, 404, code);
+     }
+}
+
+export class ConflictError extends AppError {
+     constructor(message, code = 'CONFLICT') {
+          super(message, 409, code);
+     }
+}
+
+export class TooManyRequestsError extends AppError {
+     constructor(message, code = 'TOO_MANY_REQUESTS') {
+          super(message, 429, code);
+     }
+}
+
+export class InternalServerError extends AppError {
+     constructor(message = 'Internal Server Error', code = 'SERVER_ERROR') {
+          super(message, 500, code);
+     }
+}
+
+export class ServiceUnavailableError extends AppError {
+     constructor(message, errorCode = 'SERVICE_UNAVAILABLE') {
+          super(message, 503, errorCode);
+     }
+}
+
+export class GatewayTimeoutError extends AppError {
+     constructor(message, errorCode = 'GATEWAY_TIMEOUT') {
+          super(message, 504, errorCode);
+     }
+}
+
+
+================================================
+FILE: notification-service/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js"]
+}
+
+
+
+================================================
+FILE: notification-service/package.json
+================================================
+{
+  "name": "notification-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  },
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "kafkajs": "^2.2.4",
+    "winston": "^3.19.0"
+  }
+}
+
+
+
+================================================
+FILE: notification-service/.env.example
+================================================
+PORT=4004
+LOG_LEVEL=info
+NODE_ENV=development
+ALLOWED_ORIGINS=http://localhost:4000,http://localhost:4001,http://localhost:4004
+KAFKA_BROKER=localhost:9093
+KAFKA_CLIENT_ID=notification-service
+SENDGRID_API_KEY=use_your_sendgrid_api_key
+MAIL_SEND=use_your_email_id
+FRONTEND_URL=http://localhost:3000/login
+
+
+================================================
+FILE: notification-service/src/index.js
+================================================
+import "dotenv/config"
+import { logger } from "./config/logger.js";
+import { emailConsumer } from "./kafka/consumer/email.consumer.js";
+
+process.on("unhandledRejection", (reason, promise) => {
+  logger.error("Unhandled Rejection", {
+    reason: reason instanceof Error ? reason.message : String(reason),
+    promise,
+  });
+
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught Exception", {
+    error: error.message,
+    stack: error.stack,
+  });
+
+  process.exit(1);
+});
+
+async function startNotificationService() {
+  try {
+    logger.info("Starting Notification Service...");
+
+    const requiredEnvVars = [
+      "SENDGRID_API_KEY",
+      "MAIL_SEND",
+      "KAFKA_BROKER",
+    ];
+
+    const missing = requiredEnvVars.filter(
+      (varName) => !process.env[varName],
+    );
+
+    if (missing.length > 0) {
+      throw new Error(
+        `Missing required environment variables: ${missing.join(", ")}`,
+      );
+    }
+
+    await emailConsumer.start();
+
+    logger.info("Notification Service started successfully");
+    logger.info("Service is ready to process notifications");
+  } catch (error) {
+    console.error("STARTUP ERROR:", error);
+
+    logger.error("Failed to start Notification Service", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    process.exit(1);
+  }
+}
+
+startNotificationService();
+
+
+================================================
+FILE: notification-service/src/config/index.js
+================================================
+import packageJson from "../../package.json" with { type: "json" };
+
+export const config = {
+     SERVICE_NAME: packageJson.name,
+     PORT: Number(process.env.PORT) || 4004,
+     NODE_ENV: process.env.NODE_ENV || "development",
+     LOG_LEVEL: process.env.LOG_LEVEL || "info",
+     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+     SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+     KAFKA_BROKER: process.env.KAFKA_BROKER,
+     KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
+     MAIL_SEND: process.env.MAIL_SEND,
+     FRONTEND_URL: process.env.FRONTEND_URL
+}
+
+
+================================================
+FILE: notification-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs";
+import {logger} from "./logger.js";
+import { config } from "./index.js";
+
+export const kafka = new Kafka({
+     clientId: config.KAFKA_CLIENT_ID,
+     brokers: [config.KAFKA_BROKER || 'localhost:9093'],
+  logLevel: logLevel.ERROR,
+      requestTimeout: 30_000,
+     retry: {
+          initialRetryTime: 300,
+          retries: 10,
+          maxRetryTime: 30000,
+          multiplier: 2,
+     },
+});
+
+export const consumer = kafka.consumer({
+     groupId: 'notification-service-group',
+     sessionTimeout: 30000,
+     heartbeatInterval: 3000,
+});
+
+// Producer (used only for DLQ publishing)
+export const producer = kafka.producer({
+     allowAutoTopicCreation: true,
+     retry: { retries: 3 },
+});
+
+let isProducerConnected = false;
+
+export const connectProducer = async () => {
+     if (!isProducerConnected) {
+          await producer.connect();
+          isProducerConnected = true;
+          logger.info('Kafka producer connected (DLQ)');
+     }
+};
+
+// Graceful shutdown
+const shutdown = async () => {
+     logger.info('Shutting down Kafka connections...');
+     await consumer.disconnect();
+     if (isProducerConnected) {
+          await producer.disconnect();
+          isProducerConnected = false;
+     }
+     process.exit(0);
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+
+
+
+================================================
+FILE: notification-service/src/config/logger.js
+================================================
+import winston from "winston";
+import { config } from "./index.js";
+
+
+export const logger = winston.createLogger({
+     level: config.LOG_LEVEL,
+     defaultMeta: {service: config.SERVICE_NAME},
+     format: winston.format.combine(
+          winston.format.timestamp(),
+          winston.format.printf(({level, message, timestamp, service}) =>{
+               return `[${timestamp}] [${level}] [${service}]: ${message}`
+          })
+     ),
+     transports: [new winston.transports.Console()]
+})
+
+
+
+
+================================================
+FILE: notification-service/src/kafka/consumer/email.consumer.js
+================================================
+import { consumer } from "../../config/kafka.js";
+import { logger } from "../../config/logger.js";
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+import { emailService } from "../../services/email.service.js";
+
+class EmailConsumer {
+  async start() {
+    await consumer.connect();
+    logger.info("Email consumer connected to Kafka");
+
+    await consumer.subscribe({
+      topics: Object.values(KAFKA_TOPICS),
+      fromBeginning: false,
+    });
+    await consumer.run({
+      eachMessage: async ({ topic, partition, message }) => {
+        try {
+          const rawValue = message.value?.toString();
+
+          if (!rawValue) {
+            logger.warn("Kafka message has no value");
+            return;
+          }
+
+          const value = JSON.parse(rawValue);
+
+          logger.info(`Processing messages from topic: ${topic}`, {
+            partition,
+            offset: message.offset,
+            key: message.key?.toString(),
+          });
+          await this.handleMessage(topic, value);
+        } catch (error) {
+          logger.error("Error processing message", {
+            topic,
+            partition,
+            offset: message.offset,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+        }
+      },
+    });
+
+    logger.info("Email consumer is running and listening for messages...");
+  }
+
+  async handleMessage(topic, data) {
+    switch (topic) {
+      case KAFKA_TOPICS.OTP_EMAIL:
+        await this.handleOtpEmail(data);
+        break;
+
+      case KAFKA_TOPICS.WELCOME_EMAIL:
+        await this.handleWelcomeEmail(data);
+        break;
+
+      // case KAFKA_TOPICS.BOOKING_CONFIRMED:
+      //   await this.handleBookingConfirmed(data);
+      //   break;
+
+      // case KAFKA_TOPICS.BOOKING_FAILED:
+      //   await this.handleBookingFailed(data);
+      //   break;
+
+      // case KAFKA_TOPICS.BOOKING_CANCELLED:
+      //   await this.handleBookingCancelled(data);
+      //   break;
+
+      default:
+        logger.warn(`Unknown topic: ${topic}`);
+    }
+  }
+
+  async handleOtpEmail(data) {
+    const { email, otp, ttlMinutes } = data;
+
+    if (!email || !otp) {
+      throw new Error("Missing required fields: email or otp");
+    }
+
+    await emailService.sendOtpEmail(email, otp, ttlMinutes || 5);
+    logger.info(`OTP email sent to ${email}`);
+  }
+
+  async handleWelcomeEmail(data) {
+    const { email, firstName } = data;
+
+    if (!email || !firstName) {
+      throw new Error("Missing required fields: email or firstName");
+    }
+
+    await emailService.sendWelcomeEmail(email, firstName);
+    logger.info(`Welcome email sent to ${email}`);
+  }
+}
+
+export const emailConsumer = new EmailConsumer();
+
+
+
+================================================
+FILE: notification-service/src/services/email.service.js
+================================================
+import { config } from "../config/index.js";
+import sgMail from "@sendgrid/mail";
+import { logger } from "../config/logger.js";
+import { getOtpTemplate, getWelcomeTemplate } from "../templates/index.js";
+
+class EmailService {
+  
+    constructor() {
+      this.from = config.MAIL_SEND;
+      this.maxRetries = 3;
+    };
+  
+  async sendWithRetry(msg, retries = 0) {
+    try {
+      await sgMail.send(msg);
+      logger.info(`Email successfully sent to ${msg.to}`, {
+        subject: msg.subject,
+        attempt: retries + 1,
+      });
+    } catch (error) {
+      logger.error(
+        `Email sending failed (attempt ${retries + 1}/${this.maxRetries})`,
+        {
+          to: msg.to,
+          error: error instanceof Error ? error.message : String(error),
+          code:
+            error instanceof Error && "code" in error ? error.code : undefined,
+        },
+      );
+
+      if (retries < this.maxRetries - 1) {
+        //Exponential backoff
+        const delay = Math.pow(2, retries) * 1000;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        return this.sendWithRetry(msg, retries + 1);
+      }
+
+      throw error;
+    }
+  }
+
+  async sendOtpEmail(email, otp, ttlMinutes) {
+    const msg = {
+      to: email,
+      from: this.from,
+      subject: "Your verification code",
+      html: getOtpTemplate(otp, ttlMinutes),
+    };
+    return this.sendWithRetry(msg);
+  }
+
+  async sendWelcomeEmail(email, firstName) {
+    const msg = {
+      to: email,
+      from: this.from,
+      subject: "Welcome to the site - Email Verified",
+      html: getWelcomeTemplate(firstName),
+    };
+
+    return this.sendWithRetry(msg);
+  }
+}
+
+export const emailService = new EmailService();
+
+
+
+================================================
+FILE: notification-service/src/templates/index.js
+================================================
+import { config } from "../config/index.js";
+export function getOtpTemplate(otp, ttlMinutes) {
+  return `
+    <div style="
+      font-family: Arial, sans-serif; 
+      max-width: 420px; 
+      margin: auto; 
+      padding: 20px; 
+      border: 1px solid #e5e5e5; 
+      border-radius: 10px; 
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">DesignKarle</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi,
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Welcome to <strong>DesignKarle</strong> ðŸ‘‹  
+        Use the verification code below to complete your sign up:
+      </p>
+
+      <div style="text-align: center; margin: 30px 0;">
+        <div style="
+          display: inline-block; 
+          padding: 14px 26px; 
+          font-size: 32px; 
+          letter-spacing: 8px; 
+          font-weight: bold; 
+          background: #F4F4FF; 
+          border-radius: 8px; 
+          color: #4A3AFF;
+          border: 1px solid #e0e0ff;
+        ">
+          ${otp}
+        </div>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        This code will expire in <strong>${ttlMinutes} minutes</strong>.
+      </p>
+
+      <p style="font-size: 15px; color: #555;">
+        If this wasn't you, please ignore this email.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Happy Learning ðŸŽ‰<br/>
+        <strong>Team DesignKarle</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getWelcomeTemplate(firstName) {
+  return `
+    <div style="
+      font-family: Arial, sans-serif; 
+      max-width: 420px; 
+      margin: auto; 
+      padding: 20px; 
+      border: 1px solid #e5e5e5; 
+      border-radius: 10px; 
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">DesignKarle</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi <strong>${firstName}</strong>
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Welcome to <strong>DesignKarle</strong> ðŸ‘‹  
+        Your account has been successfully created and verified.
+      </p>
+
+      <div style="text-align: center; margin: 25px 0;">   
+        <a href="${config.FRONTEND_URL}/login" 
+          style="
+            display: inline-block;
+            padding: 12px 22px;
+            background: #4A3AFF;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            text-decoration: none;
+            border-radius: 6px;
+          ">
+          Login to Your Account
+        </a>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        If you did not create this account, please contact our support team immediately.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Happy Learning ðŸŽ‰<br/>
+        <strong>Team DesignKarle</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getTicketConfirmationTemplate(ticketData) {
+  const { pnr, trainName, trainNumber, from, to, date, passengers, amount } = ticketData;
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif; 
+      max-width: 600px; 
+      margin: auto; 
+      padding: 20px; 
+      border: 1px solid #e5e5e5; 
+      border-radius: 10px; 
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">ðŸŽ« Ticket Confirmed</h2>
+      </div>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>PNR:</strong> ${pnr}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Train:</strong> ${trainName} (${trainNumber})</p>
+      </div>
+
+      <div style="margin: 20px 0;">
+        <p style="margin: 10px 0;"><strong>From:</strong> ${from}</p>
+        <p style="margin: 10px 0;"><strong>To:</strong> ${to}</p>
+        <p style="margin: 10px 0;"><strong>Date:</strong> ${date}</p>
+        <p style="margin: 10px 0;"><strong>Amount Paid:</strong> â‚¹${amount}</p>
+      </div>
+
+      <div style="margin: 20px 0;">
+        <h3 style="color: #333;">Passenger Details:</h3>
+        ${passengers.map((p, i) => `
+          <p style="margin: 5px 0;">${i + 1}. ${p.name} (${p.age} yrs, ${p.gender})</p>
+        `).join('')}
+      </div>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Safe Journey! ðŸš‚<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function formatDate(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+export const FAILURE_REASON_MESSAGES = {
+  payment_failed: 'Your payment could not be processed.',
+  confirm_seats_failed: 'We could not confirm your seats with the inventory system.',
+  booking_timeout: 'Your booking expired before payment was completed.',
+};
+
+export const CANCELLATION_REASON_MESSAGES = {
+  user_cancelled: 'You requested to cancel this booking.',
+  schedule_cancelled: 'The train schedule for this booking was cancelled by IRCTC.',
+};
+
+export function getBookingConfirmedTemplate(data) {
+  const {
+    bookingId,
+    firstName,
+    trainName,
+    trainNumber,
+    fromStationName,
+    toStationName,
+    departureDate,
+    passengers = [],
+    seats = [],
+    totalAmount,
+  } = data;
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">ðŸŽ« Booking Confirmed</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi ${firstName ? `<strong>${firstName}</strong>` : 'there'},
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Your train booking has been confirmed. Here are your journey details:
+      </p>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Booking ID:</strong> ${bookingId}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Train:</strong> ${trainName} (${trainNumber})</p>
+      </div>
+
+      <div style="margin: 20px 0;">
+        ${fromStationName ? `<p style="margin: 10px 0;"><strong>From:</strong> ${fromStationName}</p>` : ''}
+        ${toStationName ? `<p style="margin: 10px 0;"><strong>To:</strong> ${toStationName}</p>` : ''}
+        <p style="margin: 10px 0;"><strong>Date:</strong> ${formatDate(departureDate)}</p>
+        <p style="margin: 10px 0;"><strong>Amount Paid:</strong> â‚¹${totalAmount}</p>
+      </div>
+
+      ${seats.length ? `
+      <div style="margin: 20px 0;">
+        <h3 style="color: #333; margin-bottom: 10px;">Seats:</h3>
+        ${seats.map(s => `
+          <p style="margin: 5px 0;">Seat ${s.seatNumber} â€” ${s.seatType} (â‚¹${s.price})</p>
+        `).join('')}
+      </div>` : ''}
+
+      ${passengers.length ? `
+      <div style="margin: 20px 0;">
+        <h3 style="color: #333; margin-bottom: 10px;">Passenger Details:</h3>
+        ${passengers.map((p, i) => `
+          <p style="margin: 5px 0;">${i + 1}. ${p.name} (${p.age} yrs, ${p.gender})</p>
+        `).join('')}
+      </div>` : ''}
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        Safe Journey! ðŸš‚<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getBookingFailedTemplate(data) {
+  const { bookingId, firstName, reason } = data;
+  const friendlyReason = FAILURE_REASON_MESSAGES[reason] || 'Your booking could not be completed.';
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">Booking Unsuccessful</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi ${firstName ? `<strong>${firstName}</strong>` : 'there'},
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        We're sorry â€” we were unable to complete your booking.
+      </p>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Booking ID:</strong> ${bookingId}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Reason:</strong> ${friendlyReason}</p>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        If any amount was debited, it will be refunded to your original payment method automatically. You can try booking again from your IRCTC account.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        We're sorry for the inconvenience.<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+export function getBookingCancelledTemplate(data) {
+  const { bookingId, firstName, reason, refundAmount } = data;
+  const friendlyReason = CANCELLATION_REASON_MESSAGES[reason] || 'Your booking has been cancelled.';
+  const refundLine = refundAmount && refundAmount > 0
+    ? `A refund of <strong>â‚¹${refundAmount}</strong> has been initiated and will be credited to your original payment method within 5â€“7 business days.`
+    : `No refund is applicable for this cancellation.`;
+
+  return `
+    <div style="
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: auto;
+      padding: 20px;
+      border: 1px solid #e5e5e5;
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    ">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <h2 style="color: #4A3AFF; margin: 0;">Booking Cancelled</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #333;">
+        Hi ${firstName ? `<strong>${firstName}</strong>` : 'there'},
+      </p>
+
+      <p style="font-size: 16px; color: #333;">
+        Your booking has been cancelled successfully.
+      </p>
+
+      <div style="background: #F4F4FF; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Booking ID:</strong> ${bookingId}</p>
+        <p style="margin: 5px 0; font-size: 16px;"><strong>Reason:</strong> ${friendlyReason}</p>
+      </div>
+
+      <p style="font-size: 15px; color: #555;">
+        ${refundLine}
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 25px 0;" />
+
+      <p style="font-size: 14px; color: #888; text-align: center;">
+        We hope to see you onboard again soon.<br/>
+        <strong>Team IRCTC</strong>
+      </p>
+    </div>
+  `;
+}
+
+
+
+
+================================================
+FILE: shared/constants/constants.js
+================================================
+/**
+ * Centralized Kafka topic definitions.
+ * Every service imports from here so topic names stay in sync.
+ */
+export const KAFKA_TOPICS = {
+     // Notification topics (user-service -> notification-service)
+     OTP_EMAIL: 'notification.otp-email',
+     WELCOME_EMAIL: 'notification.welcome-email',
+     // BOOKING_EMAIL: 'notification.booking-email',
+     // PAYMENT_EMAIL: 'notification.payment-email',
+
+     // Admin topics (admin-service -> inventory/search)
+     TRAIN_CREATED: 'admin.train-created',
+     STATION_CREATED: 'admin.station-created',
+     ROUTE_CREATED: 'admin.route-created',
+     SCHEDULE_CREATED: 'admin.schedule-created',
+     TRAIN_UPDATED: 'admin.train-updated',
+     STATION_UPDATED: 'admin.station-updated',
+     ROUTE_UPDATED: 'admin.route-updated',
+     SCHEDULE_CANCELLED: 'admin.schedule-cancelled',
+
+     // // Inventory topics (inventory-service -> search-service)
+     // SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
+
+     // // Booking topics (booking-service -> notification-service)
+     // BOOKING_CONFIRMED: 'booking.confirmed',
+     // BOOKING_CANCELLED: 'booking.cancelled',
+     // BOOKING_FAILED: 'booking.failed',
+
+     // // Payment topics (payment-service -> booking-service)
+     // PAYMENT_SUCCESS: 'payment.success',
+     // PAYMENT_FAILED: 'payment.failed',
+
+     // // Dead-letter queues (per service â€” poison messages land here)
+     // DLQ_BOOKING: 'dlq.booking-service',
+     // DLQ_INVENTORY: 'dlq.inventory-service',
+     // DLQ_SEARCH: 'dlq.search-service',
+     // DLQ_NOTIFICATION: 'dlq.notification-service',
+};
+
+/**
+ * Max retries before a consumer message is sent to the DLQ.
+ * After this many failures the message is considered poison.
+ */
+const DLQ_MAX_RETRIES = 3;
+
+
+
+
+================================================
+FILE: user-service/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js", "../shared/constants/constants.js"]
+}
+
+
+
+================================================
+FILE: user-service/package.json
+================================================
+{
+  "name": "user-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "db:migrate": "npx prisma migrate dev --name init",
+      "db:generate": "npx prisma generate"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.2.0",
+    "@prisma/client": "^7.2.0",
+    "@sendgrid/mail": "^8.1.6",
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "google-auth-library": "^10.5.0",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.9.1",
+    "jsonwebtoken": "^9.0.3",
+    "kafkajs": "^2.2.4",
+    "otp-generator": "^4.0.1",
+    "pg": "^8.17.1",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11",
+    "prisma": "^7.2.0"
+  }
+}
+
+
+================================================
+FILE: user-service/prisma.config.ts
+================================================
+// This file was generated by Prisma, and assumes you have installed the following:
+// npm install --save-dev prisma dotenv
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: process.env["DATABASE_URL"],
+  },
+});
+
+
+
+================================================
+FILE: user-service/skills-lock.json
+================================================
+{
+  "version": 1,
+  "skills": {
+    "prisma-cli": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-cli/SKILL.md",
+      "computedHash": "b92e55aef78f6796d81433c44738a6733211a04c16e65cbad6d42c5f71092aab"
+    },
+    "prisma-client-api": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-client-api/SKILL.md",
+      "computedHash": "5dcc0793337151efa73a444e5adbc7e1c24180778e83b4fe94c9109c391bd333"
+    },
+    "prisma-compute": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-compute/SKILL.md",
+      "computedHash": "fbbdcf3e01ed876113d18804d38d17359d9f7ba7a4bd353193673d5924f19818"
+    },
+    "prisma-database-setup": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-database-setup/SKILL.md",
+      "computedHash": "0911d9454bd48df3badd23a50fd90a280eabb15dcbd472c14e7b729075dadefb"
+    },
+    "prisma-driver-adapter-implementation": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-driver-adapter-implementation/SKILL.md",
+      "computedHash": "07484627aea6cce4d0f94b4090ff9acc0caa7e104f9988b95abecf80132f4103"
+    },
+    "prisma-mongodb-upgrade": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-mongodb-upgrade/SKILL.md",
+      "computedHash": "f9ba440e88ca4cec9801d04762296e29e99ca08cb8a8156e4f783ecf90279c8f"
+    },
+    "prisma-postgres": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-postgres/SKILL.md",
+      "computedHash": "d669fbd0d8017d16c967f18b20e1c1345cd4a2a0076d762459bfef79f551f655"
+    },
+    "prisma-postgres-setup": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-postgres-setup/SKILL.md",
+      "computedHash": "c89d3aa91285d8e4964fcaa5238c99a3d3c20b617e032e731cf632330a85a5a6"
+    },
+    "prisma-upgrade-v7": {
+      "source": "prisma/skills",
+      "sourceType": "github",
+      "skillPath": "prisma-upgrade-v7/SKILL.md",
+      "computedHash": "dcc6c71adca6b22f37c5bda5ac7fd63c3bb59495596a22e06a29c7c85371558f"
+    }
+  }
+}
+
+
+
+================================================
+FILE: user-service/.env.example
+================================================
+# ==========================================
+# User Service - Environment Configuration
+# ==========================================
+# Copy this file to .env and fill in actual values
+# DO NOT commit .env file with real credentials
+
+# ============ Server Configuration ============
+PORT=4001
+NODE_ENV=development
+LOG_LEVEL=info
+
+# ============ Database Configuration ============
+# PostgreSQL connection string
+# Format: postgres://username:password@host:port/database_name
+DATABASE_URL=postgres://admin:yourpassword@localhost:5432/user_service_database
+
+# ============ Redis Configuration ============
+# Redis connection string with password
+# Format: redis://:password@host:port
+REDIS_URL=redis://:yourpassword@localhost:6379
+
+# ============ Kafka Configuration ============
+# Kafka broker address
+KAFKA_BROKER=localhost:9093
+
+# ============ CORS Configuration ============
+# Comma-separated list of allowed origins
+ALLOWED_ORIGINS=http://localhost:4000,http://localhost:4001,http://localhost:4005
+
+# ============ OTP Configuration ============
+# OTP expiry time in seconds (300 = 5 minutes)
+OTP_TTL=300
+
+# OTP HMAC secret key (generate using: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+OTP_HMAC_SECRET=your_64_character_hex_string_here
+
+# Maximum OTP requests per hour per user
+OTP_RATE_MAX_PER_HOUR=5
+
+# Maximum OTP verification attempts
+OTP_MAX_VERIFY_ATTEMPTS=5
+
+# SendGrid API Key for email notifications
+# Get from: https://app.sendgrid.com/settings/api_keys
+SENDGRID_API_KEY=your_sendgrid_api_key_here
+
+# ============ JWT Configuration ============
+# JWT Access Token Secret (generate using: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+JWT_ACCESS_SECRET=your_64_character_hex_string_here
+
+# JWT Refresh Token Secret (generate using: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))")
+JWT_REFRESH_SECRET=your_128_character_hex_string_here
+
+# Token expiration times
+ACCESS_TOKEN_EXP=15m
+REFRESH_TOKEN_EXP=7d
+
+# Token expiration in seconds (for Redis TTL)
+ACCESS_TOKEN_EXP_SEC=900
+REFRESH_TOKEN_EXP_SEC=604800
+
+# Redis user session TTL in seconds (86400 = 24 hours)
+REDIS_USER_TTL=86400
+
+# ============ Inter-Service Auth ============
+# Shared secret used by other services (booking, notification) to call internal endpoints
+INTERNAL_SERVICE_KEY=your_shared_internal_service_key_here
+
+
+================================================
+FILE: user-service/prisma/schema.prisma
+================================================
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String   @id @default(uuid())
+  firstName     String
+  lastName      String
+  email         String   @unique
+  password      String?
+  emailVerified Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  AuthProviders AuthProvider[]
+}
+
+model AuthProvider {
+  id         String @id @default(uuid())
+  provider   String
+  providerId String
+  userId     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+
+================================================
+FILE: user-service/prisma/migrations/migration_lock.toml
+================================================
+# Please do not edit this file manually
+# It should be added in your version-control system (e.g., Git)
+provider = "postgresql"
+
+
+
+================================================
+FILE: user-service/prisma/migrations/20260904144739_init/migration.sql
+================================================
+-- CreateTable
+CREATE TABLE "User" (
+    "id" TEXT NOT NULL,
+    "firstName" TEXT NOT NULL,
+    "lastName" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "password" TEXT,
+    "emailVerified" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AuthProvider" (
+    "id" TEXT NOT NULL,
+    "provider" TEXT NOT NULL,
+    "providerId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "AuthProvider_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+
+-- CreateIndex
+CREATE INDEX "AuthProvider_userId_idx" ON "AuthProvider"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AuthProvider_provider_providerId_key" ON "AuthProvider"("provider", "providerId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AuthProvider_userId_provider_key" ON "AuthProvider"("userId", "provider");
+
+-- AddForeignKey
+ALTER TABLE "AuthProvider" ADD CONSTRAINT "AuthProvider_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+
+================================================
+FILE: user-service/src/index.js
+================================================
+import "dotenv/config";
+
+import express from "express";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
+
+import { config } from "./config/index.js";
+import logger from "./config/logger.js";
+
+import authRoutes from "./routes/auth.route.js";
+import userRoutes from "./routes/user.route.js";
+
+import { corsMiddleware } from "./middlewares/cors.middleware.js";
+import {errorHandler} from "./middlewares/error.middleware.js";
+import { reqLogger } from "./middlewares/req.middleware.js";
+// import { disconnectProducer } from "./config/kafka.js";
+
+const app = express();
+
+app.use(corsMiddleware);
+
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+
+app.use(reqLogger);
+app.use(express.json());
+app.use(cookieParser());
+
+app.use("/auth", authRoutes);
+app.use("/user", userRoutes);
+
+app.get("/", (req, res) => {
+  res.send("Hello from index.js of user-service");
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    message: "ok",
+  });
+});
+
+app.use(errorHandler);
+
+const startServer = async () => {
+  try {
+    const server = app.listen(config.PORT, () => {
+      logger.info(
+        `${config.SERVICE_NAME} is running on http://localhost:${config.PORT}`,
+      );
+    });
+
+    const shutdown = async () => {
+      logger.info("Shutting down gracefully...");
+
+      server.close(async () => {
+        // await disconnectProducer();
+
+        logger.info("Server closed");
+
+        process.exit(0);
+      });
+    };
+
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+  } catch (error) {
+    logger.error("Failed to Start Server", error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+
+
+================================================
+FILE: user-service/src/config/index.js
+================================================
+import packageJson from "../../package.json" with { type: "json" };
+
+/**
+ * @typedef {import("jsonwebtoken").SignOptions["expiresIn"]} TokenExpiry
+ */
+
+const config = {
+  SERVICE_NAME: packageJson.name,
+
+  PORT: Number(process.env.PORT) || 4001,
+
+  NODE_ENV: process.env.NODE_ENV || "development",
+  LOG_LEVEL: process.env.LOG_LEVEL || "info",
+
+  DATABASE_URL: process.env.DATABASE_URL,
+  REDIS_URL: process.env.REDIS_URL,
+  KAFKA_BROKER: process.env.KAFKA_BROKER,
+  KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+
+  OTP_TTL: Number(process.env.OTP_TTL || 300),
+
+  OTP_RATE_MAX_PER_HOUR: Number(
+    process.env.OTP_RATE_MAX_PER_HOUR || 5
+  ),
+
+  OTP_MAX_VERIFY_ATTEMPTS: Number(
+    process.env.OTP_MAX_VERIFY_ATTEMPTS || 5
+  ),
+
+  OTP_HMAC_SECRET:
+    process.env.OTP_HMAC_SECRET ||
+    "09dc0abbb2961391d822610b31b912e3231d4d2745c76b1ef4765af4c62f6079",
+
+  JWT_ACCESS_SECRET:
+    process.env.JWT_ACCESS_SECRET ||
+    "0f8bf908f8d38527c188c93bda49d48bd421a43fa0bdf3e77de1f0db785e6f37",
+
+  JWT_REFRESH_SECRET:
+    process.env.JWT_REFRESH_SECRET ||
+    "826d2c0edb5ad8f8ac7668556c034ea228931a49576aefccc80d6f469cc4a34c4da82ca43a5c43de91ffdad2f4644c655e2eb3ccbb8bc2848cb64fe7ea2a1ab9",
+
+  ACCESS_TOKEN_EXP:
+    /** @type {TokenExpiry} */
+    (process.env.ACCESS_TOKEN_EXP || "15m"),
+
+  REFRESH_TOKEN_EXP:
+    /** @type {TokenExpiry} */
+    (process.env.REFRESH_TOKEN_EXP || "7d"),
+
+  ACCESS_TOKEN_EXP_SEC: Number(
+    process.env.ACCESS_TOKEN_EXP_SEC || 900
+  ),
+
+  REFRESH_TOKEN_EXP_SEC: Number(
+    process.env.REFRESH_TOKEN_EXP_SEC || 604800
+  ),
+
+  REDIS_USER_TTL: Number(
+    process.env.REDIS_USER_TTL || 86400
+  ),
+
+  MAIL_SEND: process.env.MAIL_SEND,
+  SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+
+  INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY,
+};
+
+if (!config.SENDGRID_API_KEY) {
+  throw new Error("SENDGRID_API_KEY missing");
+}
+
+if (!config.MAIL_SEND) {
+  throw new Error("MAIL_SEND missing");
+}
+
+export { config };
+
+
+================================================
+FILE: user-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs"
+import { config } from "./index.js";
+import logger from "./logger.js";
+
+export const kafka = new Kafka({
+  clientId: config.KAFKA_CLIENT_ID,
+  brokers: [config.KAFKA_BROKER || 'localhost:9093'],
+  logLevel: logLevel.ERROR,
+  retry:{
+    initialRetryTime: 300,
+    retries: 8,
+    maxRetryTime:300000
+}
+})
+
+export const producer = kafka.producer({
+  allowAutoTopicCreation: true,
+  transactionTimeout: 30000,
+  idempotent: true,//Ensures exactly once delivery
+  maxInFlightRequests: 5,
+  retry: {
+    retries:5
+  }
+})
+
+let isConnected = false;
+
+export const connectProducer = async () => {
+  if (!isConnected) {
+    await producer.connect();
+             isConnected = true;
+             logger.info('Kafka producer connected');
+  }
+}
+export const disconnectProducer = async () => {
+     if (isConnected) {
+          await producer.disconnect();
+          isConnected = false;
+          logger.info('Kafka producer disconnected');
+     }
+};
+
+process.on("SIGTERM", disconnectProducer);
+process.on("SIGINT", disconnectProducer);
+
+
+================================================
+FILE: user-service/src/config/logger.js
+================================================
+import winston from "winston"
+import { config } from "./index.js";
+
+const logger = winston.createLogger({
+  level: config.LOG_LEVEL,
+  defaultMeta: { service: config.SERVICE_NAME },
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.printf(({level, message, timestamp, service}) =>{
+        return `[${timestamp}] [${level}] [${service}]: ${message}`
+      })
+  ),
+    transports:[new winston.transports.Console()]
+})
+
+export default logger;
+
+
+================================================
+FILE: user-service/src/config/prisma.js
+================================================
+import { PrismaPg } from "@prisma/adapter-pg";
+import { config } from "./index.js";
+import  {PrismaClient}  from "@prisma/client";
+
+const connectionString = config.DATABASE_URL;
+
+const globalForPrisma = global
+if (!globalForPrisma.prisma) {
+  const adapter = new PrismaPg({ connectionString })
+
+  globalForPrisma.prisma = new PrismaClient({
+    adapter,
+    log:['error','warn']
+  })
+}
+const prisma = globalForPrisma.prisma
+
+export default prisma
+
+
+================================================
+FILE: user-service/src/config/redis.js
+================================================
+import {Redis} from "ioredis";
+import { config } from "./index.js";
+import logger from "./logger.js";
+
+class RedisClient {
+  static instance;
+  static isConnected = false;
+
+  constructor() {
+    // Prevent direct instantiation.
+  }
+
+  static getInstance() {
+    if (!RedisClient.instance) {
+      const redisUrl = config.REDIS_URL;
+
+      if (!redisUrl) {
+        throw new Error("REDIS_URL is not defined in the configuration.");
+      }
+
+      RedisClient.instance = new Redis(redisUrl, {
+        retryStrategy: (times) => {
+          const delay = Math.min(times * 500, 5000);
+
+          logger.warn(
+            `Redis reconnect attempt ${times}. Retrying in ${delay}ms...`,
+          );
+
+          return delay;
+        },
+
+        maxRetriesPerRequest: 3,
+
+        // Don't keep trying forever after an authentication failure.
+        enableReadyCheck: true,
+      });
+
+      RedisClient.setupEventListeners();
+    }
+
+    return RedisClient.instance;
+  }
+
+  static setupEventListeners() {
+    const client = RedisClient.instance;
+
+    if (!client) {
+      return;
+    }
+
+    client.on("connect", () => {
+      logger.info("Redis TCP connection established");
+    });
+
+    client.on("ready", () => {
+      RedisClient.isConnected = true;
+      logger.info("Redis client is ready");
+    });
+
+    client.on("error", (error) => {
+      RedisClient.isConnected = false;
+
+      logger.error(`Redis connection error: ${error.message}`);
+    });
+
+    client.on("close", () => {
+      RedisClient.isConnected = false;
+      logger.warn("Redis connection closed");
+    });
+
+    client.on("reconnecting", () => {
+      RedisClient.isConnected = false;
+      logger.warn("Reconnecting to Redis...");
+    });
+
+    client.on("end", () => {
+      RedisClient.isConnected = false;
+      logger.warn("Redis connection ended");
+    });
+  }
+
+  static isReady() {
+    return RedisClient.isConnected;
+  }
+
+  static async testConnection() {
+    try {
+      const client = RedisClient.getInstance();
+
+      const response = await client.ping();
+
+      if (response === "PONG") {
+        logger.info("Redis ping successful");
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      logger.error(
+        `Redis connection test failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      return false;
+    }
+  }
+
+  static async closeConnection() {
+    const client = RedisClient.instance;
+
+    if (!client) {
+      return;
+    }
+
+    try {
+      await client.quit();
+
+      RedisClient.instance = null;
+      RedisClient.isConnected = false;
+
+      logger.info("Redis connection closed gracefully");
+    } catch (error) {
+      logger.error(
+        `Error closing Redis connection: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+
+      client.disconnect();
+
+      RedisClient.instance = null;
+      RedisClient.isConnected = false;
+    }
+  }
+}
+
+export const redis = RedisClient.getInstance();
+
+export default RedisClient;
+
+
+
+================================================
+FILE: user-service/src/controllers/auth.controller.js
+================================================
+import { config } from "../config/index.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { BadRequestError, UnauthorizedError } from "../utils/error.js";
+import * as authService from "../services/auth.service.js";
+import { getDeviceFingerprint } from "../utils/deviceFingerprint.js";
+
+export const sendOTP = asyncHandler(async (req, res) => {
+  const { firstName, lastName, email, password, confirmPassword } = req.body;
+  if (!firstName || !lastName || !email || !password || !confirmPassword) {
+    throw new BadRequestError("All fields are mandatory");
+  }
+
+  if (password !== confirmPassword) {
+    throw new BadRequestError("Password mismatch");
+  }
+
+  const { otpSessionId } = await authService.sendOTP(
+    firstName,
+    lastName,
+    email,
+    password,
+  );
+  res
+    .cookie("otp_session", otpSessionId, {
+      secure: true,
+      httpOnly: true,
+      sameSite: "strict",
+      maxAge: Number(config.OTP_TTL) * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "OTP sent successfully",
+    });
+});
+
+export const verifyOTP = asyncHandler(async (req, res) => {
+  const { otp } = req.body;
+  const otpSessionId = req.cookies.otp_session;
+
+  if (!otp || !otpSessionId) {
+    throw new BadRequestError("OTP or OTPSession is missing");
+  }
+  const user = await authService.verifyOTP(otp, otpSessionId);
+  res.clearCookie("otp_session");
+  return res.status(201).json({
+    success: true,
+    message: "User Account created successfully",
+    data: user,
+  });
+});
+
+export const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    throw new BadRequestError("Email and Password are required");
+  }
+
+  const deviceId = getDeviceFingerprint(req);
+  const { accessToken, refreshToken, loggedInUser } = await authService.login(
+    email,
+    password,
+    deviceId,
+  );
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+  });
+  res
+    .cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "Logged in successfully",
+      loggedInUser,
+    });
+});
+
+export const rotateRefreshToken = asyncHandler(async (req, res) => {
+  const refreshToken = req.cookies.refreshToken;
+  if (!refreshToken) {
+    throw new UnauthorizedError("Refresh token is missing", "LOGIN AGAIN");
+  }
+  const deviceId = getDeviceFingerprint(req);
+  const { newAccessToken, newRefreshToken } =
+    await authService.rotateRefreshToken(refreshToken, deviceId);
+  res.cookie("accessToken", newAccessToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+  });
+  res
+    .cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "Access and Refresh token reissued",
+    });
+});
+
+export const verifyGoogleIdToken = asyncHandler(async (req, res) => {
+  const { idToken } = req.body;
+  if (!idToken) {
+    throw new BadRequestError("Invalid Google ID Token", "INVALID_TOKEN");
+  }
+  const deviceId = getDeviceFingerprint(req);
+  const { accessToken, refreshToken, loggedInUser } =
+    await authService.verifyGoogleIdToken(idToken, deviceId);
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    maxAge: config.ACCESS_TOKEN_EXP_SEC * 1000,
+  });
+  res
+    .cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+      maxAge: config.REFRESH_TOKEN_EXP_SEC * 1000,
+    })
+    .status(200)
+    .json({
+      success: true,
+      message: "Logged in successfully",
+      loggedInUser,
+    });
+});
+
+
+
+================================================
+FILE: user-service/src/controllers/user.controller.js
+================================================
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { BadRequestError } from "../utils/error.js";
+import * as userService from "../services/user.service.js";
+
+export const getProfile = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  if (!userId) {
+    throw new BadRequestError("User Id is missing");
+  }
+  const user = await userService.getProfile(userId);
+  return res.status(200).json({
+    success: true,
+    message: "Fetched user details",
+    data: {
+      user,
+    },
+  });
+});
+
+
+
+================================================
+FILE: user-service/src/kafka/producer/notification.producer.js
+================================================
+import { connectProducer, producer } from "../../config/kafka.js";
+import logger from "../../config/logger.js";
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+
+class NotificationProducer {
+  constructor() {
+    this.isInitialized = false;
+  }
+
+  async initialize() {
+    if (!this.isInitialized) {
+      await connectProducer();
+      this.isInitialized = true;
+    }
+  }
+  async sendMessage(topic, key, value) {
+    try {
+      await this.initialize();
+      const message = {
+        topic,
+        messages: [
+          {
+            key: key || `${topic}--${Date.now()}`,
+            value: JSON.stringify(value),
+            timestamp: Date.now().toString(),
+          },
+        ],
+      };
+      const result = await producer.send(message);
+      logger.info(`Message sent to kafka topic: ${topic}`, {
+        key,
+        partition: result[0].partition,
+        offset: result[0].offset,
+      });
+      return result;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      logger.error(`Failed to send message to kafka topic: ${topic}`, {
+        error: errorMessage,
+        stack: errorStack,
+        key,
+      });
+      throw error;
+    }
+  }
+  async sendOtpEmail(email, otp, ttlMinutes = 5){
+            return this.sendMessage(
+                 KAFKA_TOPICS.OTP_EMAIL,
+                 `otp-${email}`,
+                 {email, otp, ttlMinutes}
+            )
+       }
+  
+       async sendWelcomeEmail(email, firstName){
+            return this.sendMessage(
+                 KAFKA_TOPICS.WELCOME_EMAIL,
+                 `welcome-${email}`,
+                 {email, firstName}
+            )
+       }
+}
+export const notificationProducer=new NotificationProducer()
+
+
+
+================================================
+FILE: user-service/src/middlewares/cors.middleware.js
+================================================
+import cors from "cors"
+import { config } from "../config/index.js";
+
+const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []
+
+export const corsMiddleware = cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) {
+      callback(null,true)
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+       allowedHeaders: ['Content-Type', 'Authorization'],
+})
+
+
+
+
+================================================
+FILE: user-service/src/middlewares/error.middleware.js
+================================================
+import { config } from "../config/index.js";
+import logger from "../config/logger.js";
+import { AppError } from "../utils/error.js";
+
+export const errorHandler = (err, req, res, next) => {
+  // Always log the full error internally
+  logger.error({
+    message: err?.message || "Unknown error",
+    stack: err?.stack,
+    code: err?.code,
+    path: req.path,
+    method: req.method,
+    // optional: userId if you attach it later
+  });
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+
+  // Prisma known errors (optional but useful)
+  if (err.code === "P2002") {
+    // Unique constraint violation
+    return res.status(409).json({
+      success: false,
+      error: "CONFLICT",
+      message: "Resource already exists",
+    });
+  }
+
+  if (err.code === "P2025") {
+    // Record not found
+    return res.status(404).json({
+      success: false,
+      error: "NOT_FOUND",
+      message: "Resource not found",
+    });
+  }
+
+  // Unexpected errors
+  const isDev = config.NODE_ENV === "development";
+
+  return res.status(500).json({
+    success: false,
+    error: "SERVER_ERROR",
+    message: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
+  });
+};
+
+
+
+================================================
+FILE: user-service/src/middlewares/getUserContext.js
+================================================
+import { UnauthorizedError } from "../utils/error.js";
+
+export const  getUserContext=(req, res, next)=> {
+     const userId = req.headers['x-user-id'];
+
+     if (!userId) {
+          return next(
+               new UnauthorizedError('User context missing - must come through gateway')
+          );
+     }
+
+     req.user = { id: userId };
+     next();
+}
+
+
+
+
+================================================
+FILE: user-service/src/middlewares/req.middleware.js
+================================================
+import logger from "../config/logger.js";
+
+export const reqLogger = (req, res, next) => {
+  logger.debug(`[${req.method}] ${req.originalUrl}`);
+  const start = Date.now()
+
+  res.on('finish', () => {
+           const duration = Date.now() - start;
+           logger.info(
+                `[${req.method}] ${req.originalUrl} - status: ${res.statusCode} - ${duration}ms`
+           );
+      });
+
+  next();
+   
+}
+
+
+================================================
+FILE: user-service/src/routes/auth.route.js
+================================================
+import express from "express";
+import {
+  login,
+  rotateRefreshToken,
+  sendOTP,
+  verifyGoogleIdToken,
+  verifyOTP,
+} from "../controllers/auth.controller.js";
+
+const router = express.Router();
+
+router.post("/send-otp", sendOTP);
+router.post("/verify-otp", verifyOTP);
+router.post("/login", login);
+router.post("/rotate", rotateRefreshToken);
+router.post("/google-auth", verifyGoogleIdToken);
+
+export default router;
+
+
+
+================================================
+FILE: user-service/src/routes/user.route.js
+================================================
+import express from "express"
+import { getProfile } from "../controllers/user.controller.js";
+import { getUserContext } from "../middlewares/getUserContext.js";
+
+const router = express.Router();
+
+router.get("/profile",getUserContext,getProfile)
+
+
+export default router;
+
+
+================================================
+FILE: user-service/src/services/auth.service.js
+================================================
+import logger from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { sendOtpEmail, verifyOtpEmail } from "../utils/email.js";
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  UnauthorizedError,
+} from "../utils/error.js";
+import bcrypt from "bcrypt";
+import { generateAndStoreOtp, verifyOtp } from "../utils/otp.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  verifyRefreshToken,
+} from "../utils/auth.js";
+import jwt from "jsonwebtoken";
+import { redis } from "../config/redis.js";
+import { config } from "../config/index.js";
+import { OAuth2Client } from "google-auth-library";
+import { notificationProducer } from "../kafka/producer/notification.producer.js";
+
+const client = new OAuth2Client(config.GOOGLE_CLIENT_ID);
+
+export const sendOTP = async (firstName, lastName, email, password) => {
+  const existingUser = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (existingUser) {
+    throw new ConflictError("user already exists");
+  }
+  const hashedPassword = await bcrypt.hash(password, 12);
+  const meta = { firstName, lastName, email, hashedPassword };
+  const { otp, otpSessionId } = await generateAndStoreOtp(meta);
+  await notificationProducer.sendOtpEmail(email, otp)
+  logger.info(`OTP email queued for : ${email}`);
+  return { otpSessionId };
+};
+
+export const verifyOTP = async (otp, otpSessionId) => {
+  const meta = await verifyOtp(otp, otpSessionId);
+  if (meta === null) {
+    throw new BadRequestError("Invalid or expired OTP", "OTP_INVALID");
+  }
+  const user = await prisma.user.create({
+    data: {
+      firstName: meta.firstName,
+      lastName: meta.lastName,
+      email: meta.email,
+      password: meta.hashedPassword,
+      emailVerified: true,
+    },
+  });
+  await notificationProducer.sendWelcomeEmail(meta.email, meta.firstName)
+  return user;
+};
+
+export const login = async (email, password, deviceId) => {
+  const existingUser = await prisma.user.findUnique({
+    where: { email },
+  });
+  if (!existingUser) {
+    throw new UnauthorizedError(
+      "Invalid email or password",
+      "INVALID_CREDENTIALS",
+    );
+  }
+  if (!existingUser.password) {
+    throw new BadRequestError(
+      "This account was created with Google. Please sign in with Google.",
+      "OAUTH_ONLY_ACCOUNT",
+    );
+  }
+  const doesPasswordMatch = await bcrypt.compare(
+    password,
+    existingUser.password,
+  );
+  if (!doesPasswordMatch) {
+    throw new UnauthorizedError(
+      "Invalid email or password",
+      "INVALID_CREDENTIALS",
+    );
+  }
+  const accessToken = generateAccessToken(existingUser.id);
+  const { refreshToken, jti } = generateRefreshToken(existingUser.id);
+  await redis.set(
+    `refresh:${existingUser.id}:${deviceId}`,
+    jti,
+    "EX",
+    config.REFRESH_TOKEN_EXP_SEC,
+  );
+  const { password: _password, ...safeUser } = existingUser;
+  await redis.set(
+    `user:${existingUser.id}`,
+    JSON.stringify(safeUser),
+    "EX",
+    config.REDIS_USER_TTL,
+  );
+  return { accessToken, refreshToken, loggedInUser: safeUser };
+};
+
+export const rotateRefreshToken = async (refreshToken, deviceId) => {
+  const payload = verifyRefreshToken(refreshToken);
+  const { id: userId, jti } = payload;
+  const storedJti = await redis.get(`refresh:${userId}:${deviceId}`);
+
+  if (storedJti !== jti) {
+    await redis.del(`refresh:${userId}:${deviceId}`);
+    throw new ForbiddenError("Refresh token reused", "LOGIN AGAIN");
+  }
+
+  const newAccessToken = generateAccessToken(payload.id);
+  const { jti: newJti, refreshToken: newRefreshToken } = generateRefreshToken(
+    payload.id,
+  );
+
+  await redis.set(
+    `refresh:${userId}:${deviceId}`,
+    newJti,
+    "EX",
+    config.REFRESH_TOKEN_EXP_SEC,
+  );
+  return { newAccessToken, newRefreshToken };
+};
+
+export const verifyGoogleIdToken = async (idToken,deviceId) => {
+  const ticket = await client.verifyIdToken({
+    idToken,
+    audience: config.GOOGLE_CLIENT_ID,
+  });
+  const payload = ticket.getPayload();
+  if (!payload || !payload.sub || !payload.email) {
+    throw new UnauthorizedError("Invalid Google Token Payload");
+  }
+  const googleUser = {
+    provider: payload.iss,
+    providerId: payload.sub,
+    email: payload.email,
+    firstName: payload.given_name,
+    lastName: payload.family_name,
+    emailVerified: payload.email_verified || false,
+  };
+
+  const user = await prisma.$transaction(async (tx) => {
+    let googleAuth = await tx.authProvider.findUnique({
+      where: {
+        provider_providerId: {
+          provider: googleUser.provider,
+          providerId: googleUser.providerId,
+        },
+      },
+      include: { user: true },
+    });
+    if (googleAuth) {
+      return googleAuth.user;
+    }
+    let existingUser = await tx.user.findUnique({
+      where: { email: googleUser.email },
+    });
+    if (existingUser) {
+      await tx.authProvider.create({
+        data: {
+          provider: googleUser.provider,
+          providerId: googleUser.providerId,
+          userId: existingUser.id,
+        },
+      });
+      return existingUser;
+    }
+    return await tx.user.create({
+      data: {
+        email: googleUser.email,
+        firstName: googleUser.firstName,
+        lastName: googleUser.lastName,
+        emailVerified: googleUser.emailVerified,
+        AuthProviders: {
+          create: {
+            provider: googleUser.provider,
+            providerId: googleUser.providerId,
+          },
+        },
+      },
+    });
+  });
+  const accessToken = generateAccessToken(user.id);
+  const { jti, refreshToken } = generateRefreshToken(user.id);
+  await redis.set(`refresh:${user.id}:${deviceId}`, jti, 'EX', config.REFRESH_TOKEN_EXP_SEC);
+       const {password: _password, ...safeUser} = user;
+       await redis.set(`user:${user.id}`, JSON.stringify(safeUser), 'EX', config.REDIS_USER_TTL);
+       return {accessToken, refreshToken, loggedInUser: safeUser};
+};
+
+
+
+================================================
+FILE: user-service/src/services/user.service.js
+================================================
+import { config } from "../config/index.js";
+import logger from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { redis } from "../config/redis.js";
+
+export const getProfile = async (userId) => {
+  logger.info("First check user in Redis");
+
+  const storedUser = await redis.get(`user:${userId}`)
+  if(storedUser){
+          logger.info("Fetched user profile from redis");
+          return JSON.parse(storedUser);
+     }
+  logger.info("User is not in redis, fetch user from DB");
+  const userProfile = await prisma.user.findUnique({
+            where: {
+                 id: userId
+            }
+       })
+  logger.info("Exclude password field from the user");
+      const {password: _password, ...safeUser} = userProfile;
+      logger.info("Store user profile in redis for future lookups");
+      await redis.set(`user:${userId}`, JSON.stringify(safeUser), 'EX', config.REDIS_USER_TTL);
+      return safeUser;
+}
+
+
+================================================
+FILE: user-service/src/utils/asyncHandler.js
+================================================
+export const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+
+
+================================================
+FILE: user-service/src/utils/auth.js
+================================================
+/**
+ * @typedef {import("jsonwebtoken").JwtPayload & {
+ *   id: string,
+ *   jti: string
+ * }} RefreshTokenPayload
+ */
+
+/**
+ * @param {string} refreshToken
+ * @returns {RefreshTokenPayload}
+ */
+import crypto from "crypto";
+import jwt from "jsonwebtoken";
+import { config } from "../config/index.js";
+
+export const hashToken = (refreshToken) => {
+  return crypto.createHash("sha256").update(refreshToken).digest("hex");
+};
+
+export const generateAccessToken = (userId) => {
+  const payload = { id: userId };
+  return jwt.sign(payload, config.JWT_ACCESS_SECRET, {
+    expiresIn: config.ACCESS_TOKEN_EXP,
+  });
+};
+
+export const generateRefreshToken = (userId) => {
+  const jti = crypto.randomUUID();
+
+  const payload = {
+    id: userId,
+    jti,//refreshTokenId
+  };
+  const refreshToken = jwt.sign(payload, config.JWT_REFRESH_SECRET, {
+      expiresIn: config.REFRESH_TOKEN_EXP,
+    });
+  
+    return { refreshToken, jti };
+};
+
+export const verifyAccessToken = (accessToken) => {
+  return jwt.verify(accessToken, config.JWT_ACCESS_SECRET);
+};
+
+export const verifyRefreshToken = (refreshToken) => {
+  const payload = jwt.verify(
+    refreshToken,
+    config.JWT_REFRESH_SECRET
+  );
+
+  if (typeof payload === "string") {
+    throw new Error("Invalid refresh token");
+  }
+
+  return /** @type {RefreshTokenPayload} */ (payload);
+};
+
+
+================================================
+FILE: user-service/src/utils/deviceFingerprint.js
+================================================
+import crypto from "crypto"
+
+export function getDeviceFingerprint(req) {
+  const userAgent = req.headers["user-agent"] || "";
+       const ip = req.ip || "";
+       const accept = req.headers["accept"] || "";
+  
+       const raw = `${userAgent}|${ip}|${accept}`;
+  
+       return crypto
+            .createHash("sha256")
+            .update(raw)
+            .digest("hex")
+            .slice(0, 16); // short device id
+}
+
+
+================================================
+FILE: user-service/src/utils/email.js
+================================================
+import sgMail from '@sendgrid/mail';
+import 'dotenv/config';
+import { config } from '../config/index.js';
+
+const apiKey = process.env.SENDGRID_API_KEY;
+
+if (!apiKey) {
+    throw new Error('FATAL: SENDGRID_API_KEY environment variable is not defined.');
+}
+
+sgMail.setApiKey(apiKey);
+
+const minutes = Number(config.OTP_TTL || 300) / 60;
+
+export async function sendOtpEmail(email, otp) {
+    const msg = {
+        to: email,
+        from: `${config.MAIL_SEND}`,
+        subject: 'Your verification code',
+        html: `
+        <div style="
+            font-family: Arial, sans-serif;
+            max-width: 420px;
+            margin: auto;
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;">
+            <h2 style="color: #333333; text-align: center;">Verification Code</h2>
+            <p style="color: #555555; font-size: 14px;">Your OTP for verification is:</p>
+            <h1 style="color: #4CAF50; letter-spacing: 4px; text-align: center;">${otp}</h1>
+            <p style="color: #777777; font-size: 12px; margin-top: 20px;">This code will expire in ${minutes} minutes.</p>
+        </div>`
+    };
+
+    try {
+      await sgMail.send(msg);
+    } catch (error) {
+      console.dir(error, { depth: null });
+      throw error;
+    }
+}
+
+export async function verifyOtpEmail(meta) {
+    const msg = {
+        to: meta.email,
+        from: `${config.MAIL_SEND}`,
+        subject: 'Email Verification Successful',
+        html: `
+        <div style="
+            font-family: Arial, sans-serif;
+            max-width: 420px;
+            margin: auto;
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;">
+            <h2 style="color: #4CAF50; text-align: center;">Verification Successful</h2>
+            <p style="color: #555555; font-size: 14px;">Your email address has been successfully verified.</p>
+            <p style="color: #777777; font-size: 12px; margin-top: 20px;">You can now log in and safely access your account.</p>
+        </div>`
+    };
+
+    try {
+        await sgMail.send(msg);
+    } catch (error) {
+        console.error("Error sending verification confirmation email:", error);
+        throw error;
+    }
+}
+
+
+================================================
+FILE: user-service/src/utils/error.js
+================================================
+export class AppError extends Error {
+     constructor(message, statusCode, code) {
+          super(message);
+          this.statusCode = statusCode;
+          this.code = code; // custom error code
+          Error.captureStackTrace(this, this.constructor);
+     }
+}
+
+export class BadRequestError extends AppError {
+     constructor(message, code = 'BAD_REQUEST') {
+          super(message, 400, code);
+     }
+}
+
+export class UnauthorizedError extends AppError {
+     constructor(message, code = 'UNAUTHORIZED') {
+          super(message, 401, code);
+     }
+}
+
+export class ForbiddenError extends AppError {
+     constructor(message, code = 'FORBIDDEN') {
+          super(message, 403, code);
+     }
+}
+
+export class NotFoundError extends AppError {
+     constructor(message, code = 'NOT_FOUND') {
+          super(message, 404, code);
+     }
+}
+
+export class ConflictError extends AppError {
+     constructor(message, code = 'CONFLICT') {
+          super(message, 409, code);
+     }
+}
+
+export class TooManyRequestsError extends AppError {
+     constructor(message, code = 'TOO_MANY_REQUESTS') {
+          super(message, 429, code);
+     }
+}
+
+export class InternalServerError extends AppError {
+     constructor(message = 'Internal Server Error', code = 'SERVER_ERROR') {
+          super(message, 500, code);
+     }
+}
+
+
+
+================================================
+FILE: user-service/src/utils/otp.js
+================================================
+import { config } from "../config/index.js";
+import { redis } from "../config/redis.js";
+import { TooManyRequestsError } from "./error.js";
+import otpGenerator from "otp-generator";
+import crypto from "crypto";
+
+const RATE_MAX = config.OTP_RATE_MAX_PER_HOUR;
+const ATTEMPT_MAX = config.OTP_MAX_VERIFY_ATTEMPTS;
+const OTP_TTL = config.OTP_TTL;
+const HMAC_SECRET = config.OTP_HMAC_SECRET;
+
+function hmacFor(email, otp) {
+  return crypto
+    .createHmac("sha256", HMAC_SECRET)
+    .update(email + ":" + otp)
+    .digest("hex");
+}
+
+export async function generateAndStoreOtp(meta) {
+  // how many otp's you can send in an hour
+  const rateKey = `otp:rate:${meta.email}`;
+  const sentCount = parseInt((await redis.get(rateKey)) || "0", 10);
+  if (sentCount >= RATE_MAX) {
+    throw new TooManyRequestsError(
+      "Too many OTP requests. Try again later.",
+      "OTP_RATE_LIMIT",
+    );
+  }
+  const otp = otpGenerator.generate(6, {
+    upperCaseAlphabets: false,
+    lowerCaseAlphabets: false,
+    specialChars: false,
+  });
+  const otpSessionId = crypto.randomUUID();
+  const hashed = hmacFor(meta.email, otp);
+  await redis.set(
+    `otp:session:${otpSessionId}`,
+    JSON.stringify({
+      hashedOtp: hashed,
+      meta,
+    }),
+    "EX",
+    OTP_TTL,
+  );
+  await redis.incr(rateKey);
+  await redis.expire(rateKey, 3600);
+  return { otp, otpSessionId };
+}
+
+export async function verifyOtp(otp, otpSessionId) {
+  const rawData = await redis.get(`otp:session:${otpSessionId}`);
+  if (!rawData) return null;
+  const { hashedOtp: storedOtp, meta } = JSON.parse(rawData);
+  const attemptsKey = `otp:attempts:${meta.email}`;
+  const attemptCount = parseInt((await redis.get(attemptsKey)) || "0", 10);
+  if (attemptCount >= ATTEMPT_MAX) {
+    throw new TooManyRequestsError("Too many requests to verify OTP");
+  }
+  const hashedOtp = hmacFor(meta.email, otp);
+  if (
+    crypto.timingSafeEqual(
+      Buffer.from(hashedOtp, "hex"),
+      Buffer.from(storedOtp, "hex"),
+    )
+  ) {
+    await redis.del(`otp:session:${otpSessionId}`, attemptsKey);
+    await redis.del(`otp:rate:${meta.email}`);
+    return meta;
+  } else {
+    await redis.incr(attemptsKey);
+    await redis.expire(attemptsKey, OTP_TTL);
+    return null;
+  }
+}
+
+
