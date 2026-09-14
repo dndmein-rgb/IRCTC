@@ -19,8 +19,8 @@ export const KAFKA_TOPICS = {
      ROUTE_UPDATED: 'admin.route-updated',
      SCHEDULE_CANCELLED: 'admin.schedule-cancelled',
 
-     // // Inventory topics (inventory-service -> search-service)
-     // SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
+     // Inventory topics (inventory-service -> search-service)
+     SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
 
      // // Booking topics (booking-service -> notification-service)
      // BOOKING_CONFIRMED: 'booking.confirmed',
@@ -42,5 +42,5 @@ export const KAFKA_TOPICS = {
  * Max retries before a consumer message is sent to the DLQ.
  * After this many failures the message is considered poison.
  */
-const DLQ_MAX_RETRIES = 3;
+export const DLQ_MAX_RETRIES = 3;
 

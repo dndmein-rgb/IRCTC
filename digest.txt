@@ -20,6 +20,7 @@ Directory structure:
     │       │   ├── logger.js
     │       │   └── prisma.js
     │       ├── controllers/
+    │       │   ├── schedule.controller.js
     │       │   ├── station.controller.js
     │       │   └── train.controller.js
     │       ├── kafka/
@@ -31,9 +32,11 @@ Directory structure:
     │       │   ├── getUserContext.js
     │       │   └── req.middleware.js
     │       ├── routes/
+    │       │   ├── schedule.route.js
     │       │   ├── station.route.js
     │       │   └── train.route.js
     │       ├── services/
+    │       │   ├── schedule.service.js
     │       │   ├── station.service.js
     │       │   └── train.service.js
     │       └── utils/
@@ -79,9 +82,39 @@ Directory structure:
     │       │   └── email.service.js
     │       └── templates/
     │           └── index.js
+    ├── search-service/
+    │   ├── jsconfig.json
+    │   ├── package.json
+    │   ├── .env.example
+    │   └── src/
+    │       ├── index.js
+    │       ├── config/
+    │       │   ├── elasticsearch.js
+    │       │   ├── index.js
+    │       │   ├── kafka.js
+    │       │   └── logger.js
+    │       ├── controllers/
+    │       │   └── search.controller.js
+    │       ├── kafka/
+    │       │   └── consumer/
+    │       │       └── search.consumer.js
+    │       ├── middlewares/
+    │       │   ├── cors.middleware.js
+    │       │   ├── error.middleware.js
+    │       │   ├── getUserContext.js
+    │       │   └── req.middleware.js
+    │       ├── routes/
+    │       │   └── search.route.js
+    │       ├── services/
+    │       │   └── search.service.js
+    │       └── utils/
+    │           ├── asyncHandler.js
+    │           └── error.js
     ├── shared/
-    │   └── constants/
-    │       └── constants.js
+    │   ├── constants/
+    │   │   └── constants.js
+    │   └── utils/
+    │       └── dlqHandler.js
     └── user-service/
         ├── jsconfig.json
         ├── package.json
@@ -228,33 +261,33 @@ services:
     networks:
       - irctc-network
   
-  # elasticsearch:
-  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
-  #   container_name: elasticsearch
-  #   restart: always
-  #   environment:
-  #     - discovery.type=single-node
-  #     - xpack.security.enabled=false
-  #     - ES_JAVA_OPTS=-Xms512m -Xmx512m
-  #   ports:
-  #     - "9200:9200"
-  #   volumes:
-  #     - es_data:/usr/share/elasticsearch/data
-  #   networks:
-  #     - irctc-network
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - irctc-network
 
-  # kibana:
-  #   image: docker.elastic.co/kibana/kibana:8.12.0
-  #   container_name: kibana
-  #   restart: always
-  #   depends_on:
-  #     - elasticsearch
-  #   ports:
-  #     - "5601:5601"
-  #   environment:
-  #     ELASTICSEARCH_HOSTS: http://elasticsearch:9200
-  #   networks:
-  #     - irctc-network
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    restart: always
+    depends_on:
+      - elasticsearch
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    networks:
+      - irctc-network
 volumes:
   postgres_data:
   redis_data:
@@ -633,6 +666,7 @@ import { errorHandler } from "./middlewares/error.middleware.js";
 
 import stationRoutes from "./routes/station.route.js"
 import trainRoutes from "./routes/train.route.js"
+import scheduleRoutes from "./routes/schedule.route.js"
 
 const app = express();
 
@@ -680,7 +714,7 @@ app.get('/health', (req, res) => {
 // API Routes - All protected by auth middleware
 app.use("/stations", stationRoutes);
 app.use("/trains", trainRoutes);
-// app.use("/schedules", scheduleRoutes);
+app.use("/schedules", scheduleRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);
@@ -830,6 +864,28 @@ export default prisma
 
 
 ================================================
+FILE: admin-service/src/controllers/schedule.controller.js
+================================================
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { BadRequestError } from "../utils/error.js";
+import * as scheduleService  from "../services/schedule.service.js"
+
+export const createSchedule = asyncHandler(async(req,res) => {
+  const { trainId, departureDate } = req.body;
+  if(!trainId || !departureDate){
+            throw new BadRequestError('trainId and departureDate are required');
+       }
+  
+       const schedule = await scheduleService.createSchedule({trainId, departureDate});
+       return res.status(201).json({
+            success: true,
+            message: "Train Schedule created successfully",
+            data: schedule
+       })
+})
+
+
+================================================
 FILE: admin-service/src/controllers/station.controller.js
 ================================================
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -860,26 +916,71 @@ export const createStation = asyncHandler(async(req,res) => {
 ================================================
 FILE: admin-service/src/controllers/train.controller.js
 ================================================
-import  * as trainService  from "../services/train.service.js";
+import * as trainService from "../services/train.service.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { BadRequestError } from "../utils/error.js";
 
-export const createTrain = asyncHandler(async(req,res) => {
+export const createTrain = asyncHandler(async (req, res) => {
   const { trainName, trainNumber, seats, coachName } = req.body;
-  if(!trainNumber || !trainName || !coachName || !seats){
-           throw new BadRequestError("trainNumber, trainName, and seats are required");
-      }
- 
-      if(seats.length === 0){
-           throw new BadRequestError("Atleast one seat must be defined...")
+  if (!trainNumber || !trainName || !coachName || !seats) {
+    throw new BadRequestError("trainNumber, trainName, and seats are required");
   }
-      const train = await trainService.createTrain({trainNumber, trainName, coachName, seats});
-          return res.status(201).json({
-               success: true,
-               message: "Train added successfully",
-               data: train
-          })
+
+  if (seats.length === 0) {
+    throw new BadRequestError("Atleast one seat must be defined...");
+  }
+  const train = await trainService.createTrain({
+    trainNumber,
+    trainName,
+    coachName,
+    seats,
+  });
+  return res.status(201).json({
+    success: true,
+    message: "Train added successfully",
+    data: train,
+  });
+});
+
+export const getTrainById = asyncHandler(async (req, res) => {
+  const { trainId } = req.params;
+  if (!trainId) {
+    throw new BadRequestError("Train Id is missing");
+  }
+  const train = await trainService.getTrainById(trainId);
+  return res.status(200).json({
+    success: true,
+    data: train,
+  });
+});
+
+export const createRoute = asyncHandler(async (req, res) => {
+  const { trainId, stations } = req.body;
+  if (!trainId || !stations) {
+    throw new BadRequestError("Train Id and stations are required");
+  }
+  if (stations.length < 2) {
+    throw new BadRequestError(
+      "A route must have at least 2 stations (origin and destination)",
+    );
+  }
+
+  const route = await trainService.createRoute({ trainId, stations });
+  return res.status(201).json({
+    success: true,
+    message: "Route Created",
+    data: route,
+  });
+});
+
+export const getAllTrains = asyncHandler(async(req,res) => {
+  const trains = await trainService.getAllTrains();
+  return res.status(200).json({
+            success: true,
+            data: trains
+       })
 })
+
 
 
 ================================================
@@ -1097,6 +1198,21 @@ export const reqLogger = (req, res, next) => {
 
 
 ================================================
+FILE: admin-service/src/routes/schedule.route.js
+================================================
+import express from 'express'
+import { getUserContext } from '../middlewares/getUserContext.js';
+import { createSchedule } from '../controllers/schedule.controller.js';
+
+const router = express.Router();
+
+router.post("/schedule", getUserContext, createSchedule);
+// router.put('/schedule/:scheduleId', getUserContext, cancelSchedule);
+// router.get('/schedule', getUserContext, getAllSchedules);
+export default router;
+
+
+================================================
 FILE: admin-service/src/routes/station.route.js
 ================================================
 import express from 'express'
@@ -1120,16 +1236,98 @@ FILE: admin-service/src/routes/train.route.js
 ================================================
 import express from 'express'
 import { getUserContext } from '../middlewares/getUserContext.js';
-import { createTrain } from '../controllers/train.controller.js';
+import { createRoute, createTrain, getAllTrains, getTrainById } from '../controllers/train.controller.js';
 
 const router = express.Router();
 
 router.post("/train", getUserContext, createTrain);
-// router.get("/train", getUserContext, getAllTrains);
-// router.get("/train/:trainId", getUserContext, getTrainById);
-// router.post("/route", getUserContext, createRoute);
+router.get("/train", getUserContext, getAllTrains);
+router.get("/train/:trainId", getUserContext, getTrainById);
+router.post("/route", getUserContext, createRoute);
 
 export default router
+
+
+================================================
+FILE: admin-service/src/services/schedule.service.js
+================================================
+import logger from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { adminProducer } from "../kafka/producer/admin.producer.js";
+import { BadRequestError, ConflictError, NotFoundError } from "../utils/error.js";
+
+export const createSchedule = async (data) => {
+  const { trainId, departureDate } = data;
+  const train = await prisma.train.findUnique({
+    where: { id: trainId },
+    include: {
+      seats: { orderBy: { seatNumber: "asc" } },
+      route: {
+        include: {
+          routeStations: {
+            include: { station: true },
+            orderBy: { sequenceNumber: "asc" },
+          },
+        },
+      },
+    },
+  });
+  if (!train) throw new NotFoundError("Train not found");
+  if (!train.route)
+    throw new BadRequestError(
+      "Train has no route defined. Create a route first.",
+    );
+  if (train.seats.length === 0)
+    throw new BadRequestError("Train has no seats defined.");
+
+  const parsedDate = new Date(departureDate)
+  if (isNaN(parsedDate.getTime())) {
+           throw new BadRequestError('Invalid departure date format. Use YYYY-MM-DD');
+      }
+  // Check for duplicate schedule
+      const existing = await prisma.schedule.findUnique({
+           where: { trainId_departureDate: { trainId, departureDate: parsedDate } },
+      });
+      if (existing) throw new ConflictError('Schedule already exists for this train on this date');
+      const schedule = await prisma.schedule.create({
+                data: { trainId, departureDate: parsedDate },
+           });
+
+      // Build a rich event payload with everything consumers need
+          const eventPayload = {
+               scheduleId: schedule.id,
+               trainId: train.id,
+               trainNumber: train.trainNumber,
+               trainName: train.trainName,
+               coachName: train.coachName,
+               totalSeats: train.totalSeats,
+               departureDate: departureDate,
+               status: schedule.status,
+               seats: train.seats.map((s) => ({
+                    seatId: s.id,
+                    seatNumber: s.seatNumber,
+                    seatType: s.seatType,
+                    price: s.price,
+               })),
+               route: train.route.routeStations.map((rs) => ({
+                    stationId: rs.station.id,
+                    stationName: rs.station.name,
+                    stationCode: rs.station.code,
+                    city: rs.station.city,
+                    sequenceNumber: rs.sequenceNumber,
+                    arrivalTime: rs.arrivalTime,
+                    departureTime: rs.departureTime,
+                    distanceFromOrigin: rs.distanceFromOrigin,
+               })),
+          };
+     
+          // This event goes to both inventory-service and search-service via Kafka
+          await adminProducer.publishScheduleCreated(eventPayload);
+          logger.info(`Schedule created and event published for train ${train.trainNumber} on ${departureDate}`);
+     
+          return schedule;
+};
+
 
 
 ================================================
@@ -1171,43 +1369,152 @@ FILE: admin-service/src/services/train.service.js
 import logger from "../config/logger.js";
 import prisma from "../config/prisma.js";
 import { adminProducer } from "../kafka/producer/admin.producer.js";
-import { BadRequestError, ConflictError } from "../utils/error.js";
+import {
+  BadRequestError,
+  ConflictError,
+  NotFoundError,
+} from "../utils/error.js";
 
 export const createTrain = async (data) => {
   const { trainNumber, trainName, coachName, seats } = data;
   const existing = await prisma.train.findUnique({
-    where:{trainNumber}
-  })
+    where: { trainNumber },
+  });
   if (existing) {
-     throw new ConflictError("Train with this number already exists");
+    throw new ConflictError("Train with this number already exists");
   }
   const seatNumbers = seats.map((s) => s.seatNumber);
   if (new Set(seatNumbers).size !== seatNumbers.length) {
-           throw new BadRequestError('Duplicate seat numbers found');
-      }
+    throw new BadRequestError("Duplicate seat numbers found");
+  }
   const train = await prisma.train.create({
-            data: {
-                 trainNumber,
-                 trainName,
-                 coachName: coachName || 'AC',
-                 totalSeats: seats.length,
-                 seats: {
-                      create: seats.map((seat) => ({
-                           seatNumber: seat.seatNumber,
-                           seatType: seat.seatType,
-                           price: seat.price
-                      }))
-                 }
-            },
-            include: { seats: { orderBy: { seatNumber: 'asc' } } }
-       })
+    data: {
+      trainNumber,
+      trainName,
+      coachName: coachName || "AC",
+      totalSeats: seats.length,
+      seats: {
+        create: seats.map((seat) => ({
+          seatNumber: seat.seatNumber,
+          seatType: seat.seatType,
+          price: seat.price,
+        })),
+      },
+    },
+    include: { seats: { orderBy: { seatNumber: "asc" } } },
+  });
 
   await adminProducer.publishTrainCreated(train).catch((err) => {
-            logger.error('Failed to publish train created event', { error: err.message });
-       });
-  
+    logger.error("Failed to publish train created event", {
+      error: err.message,
+    });
+  });
+
+  return train;
+};
+
+export const getTrainById = async (id) => {
+  const train = await prisma.train.findUnique({
+    where: { id },
+    include: {
+      seats: { orderBy: { seatNumber: 'asc' } },
+      route: {
+        include: {
+          routeStations: {
+            include: { station: true },
+            orderBy:{sequenceNumber:'asc'}
+          }
+        }
+      }}
+  })
+  if (!train) throw new NotFoundError('Train not found');
        return train;
 }
+
+export const getAllTrains = async () => {
+  return prisma.train.findMany({
+           include: {
+                seats: { orderBy: { seatNumber: 'asc' } },
+                route: {
+                     include: {
+                          routeStations: {
+                               include: { station: true },
+                               orderBy: { sequenceNumber: 'asc' },
+                          },
+                     },
+                },
+           },
+           orderBy: { trainNumber: 'asc' },
+      });
+}
+
+export const createRoute = async (data) => {
+  const { trainId, stations } = data;
+
+  const train = await prisma.train.findUnique({
+    where: { id: trainId },
+  });
+
+  if (!train) {
+    throw new NotFoundError("Train not found");
+  }
+  const existingRoute = await prisma.route.findUnique({
+    where: { trainId },
+  });
+  if (existingRoute) {
+    throw new ConflictError("Route already exists for this train");
+  }
+
+  const stationIds = stations.map((station) => station.stationId);
+  const existingStations = await prisma.station.findMany({
+    where: { id: { in: stationIds } },
+  });
+
+  if (existingStations.length !== stationIds.length) {
+    throw new BadRequestError("One or more station IDs are invalid");
+  }
+
+  const sorted = [...stations].sort(
+    (a, b) => a.sequenceNumber - b.sequenceNumber,
+  );
+  for (let i = 0; i < sorted.length; i++) {
+    if (sorted[i].sequenceNumber !== i + 1) {
+      throw new BadRequestError(
+        "Sequence numbers must be continuous starting from 1",
+      );
+    }
+  }
+  const route = await prisma.route.create({
+    data: {
+      trainId,
+      routeStations: {
+        create: stations.map((s) => ({
+          stationId: s.stationId,
+          sequenceNumber: s.sequenceNumber,
+          arrivalTime: s.arrivalTime || null,
+          departureTime: s.departureTime || null,
+          distanceFromOrigin: s.distanceFromOrigin || 0,
+        })),
+      },
+    },
+    include: {
+      routeStations: {
+        include: { station: true },
+        orderBy: { sequenceNumber: "asc" },
+      },
+    },
+  });
+
+  const trainWithSeats = await prisma.train.findUnique({
+    where: { id: trainId },
+    include: { seats: { orderBy: { seatNumber: "asc" } } },
+  });
+  await adminProducer.publishRouteCreated({ ...route, train: trainWithSeats });
+  return route;
+};
+
+
+
 
 
 ================================================
@@ -3362,6 +3669,1161 @@ export function getBookingCancelledTemplate(data) {
 
 
 ================================================
+FILE: search-service/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js","../shared/constants/constants.js"]
+}
+
+
+
+================================================
+FILE: search-service/package.json
+================================================
+{
+  "name": "search-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@elastic/elasticsearch": "^8.12.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "kafkajs": "^2.2.4",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
+
+
+================================================
+FILE: search-service/.env.example
+================================================
+PORT=4002
+NODE_ENV=development
+LOG_LEVEL=info
+
+ELASTICSEARCH_URL=http://localhost:9200
+
+KAFKA_BROKER=localhost:9093
+KAFKA_CLIENT_ID=search-service
+
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000,http://localhost:4001
+
+
+ES_RECREATE_INDICES=true
+
+
+================================================
+FILE: search-service/src/index.js
+================================================
+import "dotenv/config";
+
+import express from "express";
+import path from "path";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
+
+import { corsMiddleware } from "./middlewares/cors.middleware.js";
+import { reqLogger } from "./middlewares/req.middleware.js";
+import { errorHandler } from "./middlewares/error.middleware.js";
+
+import { config } from "./config/index.js";
+import { logger } from "./config/logger.js";
+import { initIndices, recreateIndices } from "./config/elasticsearch.js";
+import { searchConsumer } from "./kafka/consumer/search.consumer.js";
+import { disconnectAll } from "./config/kafka.js";
+import searchRoutes from "./routes/search.route.js";
+
+const app = express();
+
+app.use(corsMiddleware);
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+      },
+    },
+  }),
+);
+app.use(reqLogger);
+app.use(express.json());
+app.use(cookieParser());
+
+// Serve frontend static files
+app.use(express.static(path.join(__dirname, "..", "public")));
+
+// Mount search routes at root (gateway strips first path segment)
+app.use(searchRoutes);
+
+app.get("/health", (req, res) =>
+  res.json({ status: "ok", service: config.SERVICE_NAME }),
+);
+app.use(errorHandler);
+
+const startServer = async () => {
+  if (process.env.ES_RECREATE_INDICES === "true") {
+    await recreateIndices();
+  } else {
+    await initIndices();
+  }
+  await searchConsumer.start();
+
+  const server = app.listen(config.PORT, () => {
+    logger.info(
+      `${config.SERVICE_NAME} running on http://localhost:${config.PORT}`,
+    );
+  });
+
+  const shutdown = async () => {
+    logger.info("Shutting down...");
+    server.close(async () => {
+      await disconnectAll();
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+};
+
+startServer();
+
+
+
+================================================
+FILE: search-service/src/config/elasticsearch.js
+================================================
+import { Client } from "@elastic/elasticsearch";
+import { config } from "./index.js";
+import { logger } from "./logger.js";
+
+export const esClient = new Client({ node: config.ELASTICSEARCH_URL });
+
+export const STATION_INDEX = "stations";
+export const TRAIN_INDEX = "trains";
+export const ROUTE_INDEX = "routes";
+export const SCHEDULE_INDEX = "schedules";
+
+/**
+ * Create indices with mappings that power:
+ *   â€¢ Fuzzy search  (match + fuzziness)
+ *   â€¢ Autocomplete  (completion suggester)
+ *   â€¢ Full-text     (text analyzer)
+ */
+export const initIndices = async () => {
+  // â”€â”€ Station index (for autocomplete) â”€â”€
+  const stationExists = await esClient.indices.exists({ index: STATION_INDEX });
+  if (!stationExists) {
+    await esClient.indices.create({
+      index: STATION_INDEX,
+      settings: {
+        analysis: {
+          analyzer: {
+            autocomplete_analyzer: {
+              type: "custom",
+              tokenizer: "autocomplete_tokenizer",
+              filter: ["lowercase"],
+            },
+            search_analyzer: {
+              type: "custom",
+              tokenizer: "standard",
+              filter: ["lowercase"],
+            },
+          },
+          tokenizer: {
+            autocomplete_tokenizer: {
+              type: "edge_ngram",
+              min_gram: 2,
+              max_gram: 20,
+              token_chars: ["letter", "digit"],
+            },
+          },
+        },
+      },
+      mappings: {
+        properties: {
+          stationId: { type: "keyword" },
+          name: {
+            type: "text",
+            analyzer: "autocomplete_analyzer",
+            search_analyzer: "search_analyzer",
+          },
+          code: { type: "keyword" },
+          city: {
+            type: "text",
+            analyzer: "autocomplete_analyzer",
+            search_analyzer: "search_analyzer",
+          },
+          suggest: { type: "completion" },
+        },
+      },
+    });
+    logger.info("Station index created");
+  }
+
+  // â”€â”€ Train index â”€â”€
+  const trainExists = await esClient.indices.exists({ index: TRAIN_INDEX });
+  if (!trainExists) {
+    await esClient.indices.create({
+      index: TRAIN_INDEX,
+      mappings: {
+        properties: {
+          trainId: { type: "keyword" },
+          trainNumber: { type: "keyword" },
+          trainName: { type: "text" },
+          route: {
+            type: "nested",
+            properties: {
+              stationId: { type: "keyword" },
+              stationName: { type: "text" },
+              stationCode: { type: "keyword" },
+              sequenceNumber: { type: "integer" },
+              arrivalTime: { type: "keyword" },
+              departureTime: { type: "keyword" },
+              distanceFromOrigin: { type: "float" },
+            },
+          },
+          schedules: {
+            type: "nested",
+            properties: {
+              scheduleId: { type: "keyword" },
+              departureDate: { type: "date" },
+              status: { type: "keyword" },
+              available: { type: "integer" },
+              locked: { type: "integer" },
+              booked: { type: "integer" },
+            },
+          },
+          seatSummary: {
+            properties: {
+              total: { type: "integer" },
+              LOWER: { type: "integer" },
+              MIDDLE: { type: "integer" },
+              UPPER: { type: "integer" },
+              SIDE_LOWER: { type: "integer" },
+              SIDE_UPPER: { type: "integer" },
+            },
+          },
+        },
+      },
+    });
+    logger.info("Train index created");
+  }
+};
+
+export const recreateIndices = async () => {
+  for (const index of [STATION_INDEX, TRAIN_INDEX]) {
+    const exists = await esClient.indices.exists({ index });
+    if (exists) {
+      await esClient.indices.delete({ index });
+      logger.info(`Deleted index: ${index}`);
+    }
+  }
+  await initIndices();
+  logger.info("All indices recreated");
+};
+
+
+
+================================================
+FILE: search-service/src/config/index.js
+================================================
+import packageJson from "../../package.json" with { type: "json" };
+
+const KAFKA_BROKER = process.env.KAFKA_BROKER;
+
+if (!KAFKA_BROKER) {
+  throw new Error("KAFKA_BROKER is not defined");
+}
+export const config = {
+     SERVICE_NAME: packageJson.name,
+     PORT: Number(process.env.PORT) || 4002,
+     NODE_ENV: process.env.NODE_ENV || "development",
+     LOG_LEVEL: process.env.LOG_LEVEL || "info",
+     ELASTICSEARCH_URL: process.env.ELASTICSEARCH_URL,
+     KAFKA_BROKER,
+     KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
+     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+}
+
+
+
+================================================
+FILE: search-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs";
+import { config } from "./index.js";
+import { logger } from "./logger.js";
+
+export const kafka = new Kafka({
+  clientId: config.KAFKA_CLIENT_ID,
+  brokers: [config.KAFKA_BROKER],
+  logLevel: logLevel.ERROR,
+  retry: { initialRetryTime: 300, retries: 8, maxRetryTime: 30000 },
+});
+
+export const consumer = kafka.consumer({
+  groupId: "search-service-group-v2",
+  sessionTimeout: 30000,
+  heartbeatInterval: 3000,
+});
+
+// Producer (used only for DLQ publishing)
+export const producer = kafka.producer({
+     allowAutoTopicCreation: true,
+     retry: { retries: 3 },
+});
+
+let isProducerConnected = false;
+
+export const connectProducer = async () => {
+     if (!isProducerConnected) {
+          await producer.connect();
+          isProducerConnected = true;
+          logger.info('Kafka producer connected (DLQ)');
+     }
+};
+
+export const disconnectAll = async () => {
+     await consumer.disconnect();
+     if (isProducerConnected) {
+          await producer.disconnect();
+          isProducerConnected = false;
+     }
+     logger.info('Kafka consumer disconnected');
+};
+
+
+================================================
+FILE: search-service/src/config/logger.js
+================================================
+import winston from 'winston'
+import { config } from './index.js';
+
+const logFormat = winston.format.combine(
+     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+     winston.format.errors({ stack: true }),
+     winston.format.splat(),
+     winston.format.json()
+);
+
+export const logger = winston.createLogger({
+     level: config.NODE_ENV === 'production' ? 'info' : 'debug',
+     format: logFormat,
+     defaultMeta: { service: config.SERVICE_NAME },
+     transports: [
+          new winston.transports.Console({
+               format: winston.format.combine(
+                    winston.format.colorize(),
+                    winston.format.printf(({ timestamp, level, message, service, ...meta }) => {
+                         let msg = `${timestamp} [${service}] ${level}: ${message}`;
+                         if (Object.keys(meta).length > 0) {
+                              msg += ` ${JSON.stringify(meta)}`;
+                         }
+                         return msg;
+                    })
+               )
+          }),
+          new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+          new winston.transports.File({ filename: 'logs/combined.log' })
+     ]
+});
+
+
+
+
+================================================
+FILE: search-service/src/controllers/search.controller.js
+================================================
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { BadRequestError } from "../utils/error.js";
+import * as  searchService from "../services/search.service.js"
+
+
+export const searchTrains = asyncHandler(async (req, res) => {
+     const { from, to, date } = req.query;
+     if (!from || !to) throw new BadRequestError('from and to station names/codes are required');
+     const results = await searchService.searchTrains(from, to, date || null);
+     res.json({ success: true, data: results });
+});
+
+export const autocomplete = asyncHandler(async (req, res) => {
+     const { q } = req.query;
+     if (!q || q.length < 2) throw new BadRequestError('Provide at least 2 characters');
+     const suggestions = await searchService.autocompleteStation(q);
+     res.json({ success: true, data: suggestions });
+});
+
+export const debugStations = asyncHandler(async (req, res) => {
+     const data = await searchService.getAllStations();
+     res.json({ success: true, count: data.length, data });
+});
+
+export const debugTrains = asyncHandler(async (req, res) => {
+     const data = await searchService.getAllTrains();
+     res.json({ success: true, count: data.length, data });
+});
+
+
+================================================
+FILE: search-service/src/kafka/consumer/search.consumer.js
+================================================
+import { connectProducer, consumer } from "../../config/kafka.js";
+import { logger } from "../../config/logger.js";
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js"
+import {withDLQ}  from "../../../../shared/utils/dlqHandler.js"
+
+class SearchConsumer {
+     async start() {
+          await consumer.connect();
+          await connectProducer(); // needed for DLQ publishing
+          logger.info('Search consumer connected');
+
+          await consumer.subscribe({
+               topics: [
+                    KAFKA_TOPICS.STATION_CREATED,
+                    KAFKA_TOPICS.ROUTE_CREATED,
+                    KAFKA_TOPICS.SCHEDULE_CREATED,
+                    KAFKA_TOPICS.SCHEDULE_CANCELLED,
+                    KAFKA_TOPICS.SEAT_AVAILABILITY_UPDATED,
+               ],
+               fromBeginning: true,
+          });
+
+          await consumer.run({
+               eachMessage: withDLQ(producer, KAFKA_TOPICS.DLQ_SEARCH, logger, async ({ topic, partition, message, parsedValue }) => {
+                    logger.info(`Processing ${topic}`, { partition, offset: message.offset });
+
+                    switch (topic) {
+                         case KAFKA_TOPICS.STATION_CREATED:
+                              await searchService.indexStation(parsedValue);
+                              break;
+                         case KAFKA_TOPICS.ROUTE_CREATED:
+                              await searchService.indexTrainRoute(parsedValue);
+                              break;
+                         case KAFKA_TOPICS.SCHEDULE_CREATED:
+                              await searchService.indexSchedule(parsedValue);
+                              break;
+                         case KAFKA_TOPICS.SCHEDULE_CANCELLED:
+                              await searchService.cancelSchedule(parsedValue);
+                              break;
+                         case KAFKA_TOPICS.SEAT_AVAILABILITY_UPDATED:
+                              await searchService.updateSeatAvailability(parsedValue);
+                              break;
+                         default:
+                              logger.warn(`Unknown topic: ${topic}`);
+                    }
+               }),
+          });
+
+          logger.info('Search consumer running...');
+     }
+}
+
+export const searchConsumer=new SearchConsumer()
+
+
+================================================
+FILE: search-service/src/middlewares/cors.middleware.js
+================================================
+import cors from "cors"
+import { config } from "../config/index.js";
+
+const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []
+
+export const corsMiddleware = cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) {
+      callback(null,true)
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+       allowedHeaders: ['Content-Type', 'Authorization'],
+})
+
+
+
+
+================================================
+FILE: search-service/src/middlewares/error.middleware.js
+================================================
+import { config } from "../config/index.js";
+import {logger} from "../config/logger.js";
+import { AppError } from "../utils/error.js";
+
+export const errorHandler = (err, req, res, next) => {
+  // Always log the full error internally
+  logger.error({
+    message: err?.message || "Unknown error",
+    stack: err?.stack,
+    code: err?.code,
+    path: req.path,
+    method: req.method,
+    // optional: userId if you attach it later
+  });
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+
+  // Prisma known errors (optional but useful)
+  if (err.code === "P2002") {
+    // Unique constraint violation
+    return res.status(409).json({
+      success: false,
+      error: "CONFLICT",
+      message: "Resource already exists",
+    });
+  }
+
+  if (err.code === "P2025") {
+    // Record not found
+    return res.status(404).json({
+      success: false,
+      error: "NOT_FOUND",
+      message: "Resource not found",
+    });
+  }
+
+  // Unexpected errors
+  const isDev = config.NODE_ENV === "development";
+
+  return res.status(500).json({
+    success: false,
+    error: "SERVER_ERROR",
+    message: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
+  });
+};
+
+
+
+================================================
+FILE: search-service/src/middlewares/getUserContext.js
+================================================
+import { UnauthorizedError } from "../utils/error.js";
+
+export const  getUserContext=(req, res, next)=> {
+     const userId = req.headers['x-user-id'];
+
+     if (!userId) {
+          return next(
+               new UnauthorizedError('User context missing - must come through gateway')
+          );
+     }
+
+     req.user = { id: userId };
+     next();
+}
+
+
+
+
+================================================
+FILE: search-service/src/middlewares/req.middleware.js
+================================================
+import {logger} from "../config/logger.js";
+
+export const reqLogger = (req, res, next) => {
+  logger.debug(`[${req.method}] ${req.originalUrl}`);
+  const start = Date.now()
+
+  res.on('finish', () => {
+           const duration = Date.now() - start;
+           logger.info(
+                `[${req.method}] ${req.originalUrl} - status: ${res.statusCode} - ${duration}ms`
+           );
+      });
+
+  next();
+   
+}
+
+
+================================================
+FILE: search-service/src/routes/search.route.js
+================================================
+import { Router } from "express";
+import * as ctrl from "../controllers/search.controller.js"
+const router = Router();
+
+// GET /search/trains?from=Delhi&to=Mumbai&date=2025-07-15
+router.get('/trains', ctrl.searchTrains);
+
+// GET /search/autocomplete?q=del
+router.get('/autocomplete', ctrl.autocomplete);
+
+// Debug endpoints
+router.get('/debug/stations', ctrl.debugStations);
+router.get('/debug/trains', ctrl.debugTrains);
+
+export default router;
+
+
+================================================
+FILE: search-service/src/services/search.service.js
+================================================
+// ═══════════════════════════════════════════════════
+//  INDEX OPERATIONS (called by Kafka consumer)
+// ═══════════════════════════════════════════════════
+import {
+  esClient,
+  STATION_INDEX,
+  TRAIN_INDEX,
+} from "../config/elasticsearch.js";
+import { logger } from "../config/logger.js";
+
+/**
+ * When admin creates a station, index it for autocomplete.
+ * Event shape: { eventType, data: { id, name, code, city, state }, timestamp }
+ */
+export const indexStation = async (event) => {
+  const station = event.data;
+  if (!station) return;
+
+  try {
+    await esClient.index({
+      index: STATION_INDEX,
+      id: station.id,
+      document: {
+        stationId: station.id,
+        name: station.name,
+        code: station.code,
+        city: station.city,
+        suggest: {
+          input: [station.name, station.code, station.city].filter(Boolean),
+          weight: 10,
+        },
+      },
+      refresh: true,
+    });
+    logger.info(`Indexed station ${station.name} (${station.code})`);
+  } catch (err) {
+    logger.error(
+      `Failed to index station: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+};
+
+/**
+ * When admin creates a route, we get enriched payload with train+seats+routeStations.
+ */
+export const indexTrainRoute = async (routeEvent) => {
+  const { train, routeStations } = routeEvent;
+  if (!train || !routeStations) return;
+
+  const seatSummary = {
+    total: 0,
+    LOWER: 0,
+    MIDDLE: 0,
+    UPPER: 0,
+    SIDE_LOWER: 0,
+    SIDE_UPPER: 0,
+  };
+
+  (train.seats || []).forEach((s) => {
+    seatSummary.total++;
+    if (seatSummary[s.seatType] !== undefined) seatSummary[s.seatType]++;
+  });
+
+  const doc = {
+    trainId: train.id,
+    trainNumber: train.trainNumber,
+    trainName: train.trainName,
+    route: routeStations.map((rs) => ({
+      stationId: rs.station.id,
+      stationName: rs.station.name,
+      stationCode: rs.station.code,
+      sequenceNumber: rs.sequenceNumber,
+      arrivalTime: rs.arrivalTime,
+      departureTime: rs.departureTime,
+      distanceFromOrigin: rs.distanceFromOrigin,
+    })),
+    schedules: [],
+    seatSummary,
+  };
+
+  await esClient.index({
+    index: TRAIN_INDEX,
+    id: train.id,
+    document: doc,
+    refresh: true,
+  });
+
+  // Also index/update stations for autocomplete
+  for (const rs of routeStations) {
+    await esClient.index({
+      index: STATION_INDEX,
+      id: rs.station.id,
+      document: {
+        stationId: rs.station.id,
+        name: rs.station.name,
+        code: rs.station.code,
+        city: rs.station.city,
+        suggest: {
+          input: [rs.station.name, rs.station.code, rs.station.city].filter(
+            Boolean,
+          ),
+          weight: 10,
+        },
+      },
+      refresh: true,
+    });
+  }
+
+  logger.info(
+    `Indexed train ${train.trainNumber} with ${routeStations.length} stations`,
+  );
+};
+
+/**
+ * When admin creates a schedule, add it to the train's schedules array.
+ */
+export const indexSchedule = async (scheduleEvent) => {
+  const { scheduleId, trainId, departureDate, status, seats } = scheduleEvent;
+  const totalSeats = seats ? seats.length : 0;
+
+  try {
+    await esClient.update({
+      index: TRAIN_INDEX,
+      id: trainId,
+      script: {
+        source: `
+          if (ctx._source.schedules == null) { ctx._source.schedules = []; }
+          // Remove existing schedule with same id (idempotent)
+          ctx._source.schedules.removeIf(s -> s.scheduleId == params.scheduleId);
+          ctx._source.schedules.add(params.newSchedule);
+        `,
+        params: {
+          scheduleId,
+          newSchedule: {
+            scheduleId,
+            departureDate,
+            status,
+            available: totalSeats,
+            locked: 0,
+            booked: 0,
+          },
+        },
+      },
+      refresh: true,
+    });
+    logger.info(`Indexed schedule ${scheduleId} for train ${trainId}`);
+  } catch (err) {
+    logger.warn(
+      `Could not index schedule for train ${trainId}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+};
+
+/**
+ * When admin cancels a schedule, update its status in ES.
+ * Event shape: { eventType, data: { id, trainId, status: 'CANCELLED', ... }, timestamp }
+ */
+export const cancelSchedule = async (event) => {
+  const schedule = event.data;
+  if (!schedule) return;
+
+  try {
+    await esClient.update({
+      index: TRAIN_INDEX,
+      id: schedule.trainId,
+      script: {
+        source: `
+          if (ctx._source.schedules != null) {
+            for (def s : ctx._source.schedules) {
+              if (s.scheduleId == params.scheduleId) {
+                s.status = 'CANCELLED';
+              }
+            }
+          }
+        `,
+        params: { scheduleId: schedule.id },
+      },
+      refresh: true,
+    });
+    logger.info(
+      `Cancelled schedule ${schedule.id} for train ${schedule.trainId}`,
+    );
+  } catch (err) {
+    logger.warn(
+      `Could not cancel schedule: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+};
+
+/**
+ * When inventory changes (seat booked/released), update availability counts.
+ */
+export const updateSeatAvailability = async (event) => {
+  const { scheduleId, trainId, available, locked, booked } = event;
+
+  try {
+    await esClient.update({
+      index: TRAIN_INDEX,
+      id: trainId,
+      script: {
+        source: `
+          if (ctx._source.schedules != null) {
+            for (def s : ctx._source.schedules) {
+              if (s.scheduleId == params.scheduleId) {
+                s.available = params.available;
+                s.locked    = params.locked;
+                s.booked    = params.booked;
+              }
+            }
+          }
+        `,
+        params: {
+          scheduleId,
+          available: available || 0,
+          locked: locked || 0,
+          booked: booked || 0,
+        },
+      },
+      refresh: true,
+    });
+    logger.info(`Updated availability for schedule ${scheduleId}`);
+  } catch (err) {
+    logger.warn(
+      `Could not update availability: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+};
+
+// ═══════════════════════════════════════════════════
+//  SEARCH OPERATIONS (called by API)
+// ═══════════════════════════════════════════════════
+
+/**
+ * Search trains running between two stations on a given date.
+ * Supports fuzzy matching on station names.
+ */
+export const searchTrains = async (from, to, date) => {
+  const fromStation = await resolveStation(from);
+  const toStation = await resolveStation(to);
+
+  if (!fromStation)
+    return { trains: [], message: `Station "${from}" not found` };
+  if (!toStation) return { trains: [], message: `Station "${to}" not found` };
+
+  const query = {
+    bool: {
+      must: [
+        {
+          nested: {
+            path: "route",
+            query: { term: { "route.stationId": fromStation.stationId } },
+            inner_hits: { name: "from_station" },
+          },
+        },
+        {
+          nested: {
+            path: "route",
+            query: { term: { "route.stationId": toStation.stationId } },
+            inner_hits: { name: "to_station" },
+          },
+        },
+      ],
+    },
+  };
+
+  const result = await esClient.search({
+    index: TRAIN_INDEX,
+    query,
+    size: 50,
+  });
+
+  const normalize = (d) => new Date(d).toISOString().slice(0, 10);
+
+  const trains = result.hits.hits
+    .map((hit) => {
+      const src = /** @type {any} */ (hit._source);
+      if (!src) return null;
+
+      const fromHit = hit.inner_hits?.from_station?.hits?.hits?.[0]?._source;
+      const toHit = hit.inner_hits?.to_station?.hits?.hits?.[0]?._source;
+
+      if (
+        !fromHit ||
+        !toHit ||
+        fromHit.sequenceNumber >= toHit.sequenceNumber
+      ) {
+        return null;
+      }
+
+      let scheduleInfo = null;
+      if (date && Array.isArray(src.schedules) && src.schedules.length > 0) {
+        scheduleInfo =
+          src.schedules.find(
+            (s) => s.status === "ACTIVE" && normalize(s.departureDate) === date,
+          ) || null;
+      }
+
+      return {
+        trainId: src.trainId,
+        trainNumber: src.trainNumber,
+        trainName: src.trainName,
+        from: {
+          name: fromHit.stationName,
+          code: fromHit.stationCode,
+          departure: fromHit.departureTime,
+          stationId: fromHit.stationId,
+          sequenceNumber: fromHit.sequenceNumber,
+        },
+        to: {
+          name: toHit.stationName,
+          code: toHit.stationCode,
+          arrival: toHit.arrivalTime,
+          stationId: toHit.stationId,
+          sequenceNumber: toHit.sequenceNumber,
+        },
+        seatSummary: src.seatSummary,
+        schedule: scheduleInfo,
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    from: { resolved: fromStation.name, code: fromStation.code },
+    to: { resolved: toStation.name, code: toStation.code },
+    date: date || "any",
+    count: trains.length,
+    trains,
+  };
+};
+
+/**
+ * Fuzzy-resolve a station name/code to its ID.
+ * Three strategies: exact code → completion suggester → fuzzy match
+ */
+export const resolveStation = async (input) => {
+  // 1. Try exact code match
+  const exactResult = await esClient.search({
+    index: STATION_INDEX,
+    query: { term: { code: input.toUpperCase() } },
+    size: 1,
+  });
+
+  if (exactResult.hits.hits.length > 0) {
+    return /** @type {any} */ (exactResult.hits.hits[0]._source);
+  }
+
+  // 2. Try completion suggester (handles typos like "dehli" → "Delhi")
+  // 2. Try completion suggester
+  try {
+    const suggestResult = await esClient.search({
+      index: STATION_INDEX,
+      suggest: {
+        station_suggest: {
+          prefix: input,
+          completion: {
+            field: "suggest",
+            fuzzy: { fuzziness: "AUTO" },
+            size: 1,
+          },
+        },
+      },
+    });
+
+    const options = suggestResult.suggest?.station_suggest?.[0]?.options;
+    const optionList = Array.isArray(options)
+      ? options
+      : options
+        ? [options]
+        : [];
+
+    if (optionList.length > 0) {
+      return /** @type {any} */ (optionList[0])._source || null;
+    }
+  } catch (err) {
+    logger.warn(
+      `Suggest fallback failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // 3. Fuzzy match on name
+  const fuzzyResult = await esClient.search({
+    index: STATION_INDEX,
+    query: {
+      multi_match: {
+        query: input,
+        fields: ["name", "city"],
+        fuzziness: "AUTO",
+        prefix_length: 1,
+      },
+    },
+    size: 1,
+  });
+
+  return fuzzyResult.hits.hits.length > 0
+    ? /** @type {any} */ (fuzzyResult.hits.hits[0]._source)
+    : null;
+};
+
+/**
+ * Autocomplete station names as user types.
+ */
+export const autocompleteStation = async (prefix) => {
+  const result = await esClient.search({
+    index: STATION_INDEX,
+    suggest: {
+      station_suggest: {
+        prefix,
+        completion: {
+          field: "suggest",
+          fuzzy: { fuzziness: "AUTO" },
+          size: 10,
+        },
+      },
+    },
+  });
+
+  const options = result.suggest?.station_suggest?.[0]?.options;
+  const optionList = Array.isArray(options)
+    ? options
+    : options
+      ? [options]
+      : [];
+
+  return optionList.map((o) => {
+    // completion options have _source, other suggest types don't
+    const src = /** @type {any} */ (o)._source || {};
+    return {
+      name: src.name,
+      code: src.code,
+      stationId: src.stationId,
+    };
+  });
+};
+/**
+ * Debug: get all indexed stations
+ */
+export const getAllStations = async () => {
+  const result = await esClient.search({
+    index: STATION_INDEX,
+    query: { match_all: {} },
+    size: 100,
+  });
+
+  return result.hits.hits.map((h) => /** @type {any} */ (h._source));
+};
+
+/**
+ * Debug: get all indexed trains
+ */
+export const getAllTrains = async () => {
+  const result = await esClient.search({
+    index: TRAIN_INDEX,
+    query: { match_all: {} },
+    size: 100,
+  });
+
+  return result.hits.hits.map((h) => /** @type {any} */ (h._source));
+};
+
+
+
+================================================
+FILE: search-service/src/utils/asyncHandler.js
+================================================
+export const asyncHandler = fn => (req, res, next) => {
+     Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+
+================================================
+FILE: search-service/src/utils/error.js
+================================================
+export class AppError extends Error {
+     constructor(message, statusCode, code) {
+          super(message);
+          this.statusCode = statusCode;
+          this.code = code; // custom error code
+          Error.captureStackTrace(this, this.constructor);
+     }
+}
+
+export class BadRequestError extends AppError {
+     constructor(message, code = 'BAD_REQUEST') {
+          super(message, 400, code);
+     }
+}
+
+export class UnauthorizedError extends AppError {
+     constructor(message, code = 'UNAUTHORIZED') {
+          super(message, 401, code);
+     }
+}
+
+export class ForbiddenError extends AppError {
+     constructor(message, code = 'FORBIDDEN') {
+          super(message, 403, code);
+     }
+}
+
+export class NotFoundError extends AppError {
+     constructor(message, code = 'NOT_FOUND') {
+          super(message, 404, code);
+     }
+}
+
+export class ConflictError extends AppError {
+     constructor(message, code = 'CONFLICT') {
+          super(message, 409, code);
+     }
+}
+
+export class TooManyRequestsError extends AppError {
+     constructor(message, code = 'TOO_MANY_REQUESTS') {
+          super(message, 429, code);
+     }
+}
+
+export class InternalServerError extends AppError {
+     constructor(message = 'Internal Server Error', code = 'SERVER_ERROR') {
+          super(message, 500, code);
+     }
+}
+
+
+
+================================================
 FILE: shared/constants/constants.js
 ================================================
 /**
@@ -3408,9 +4870,187 @@ export const KAFKA_TOPICS = {
  * Max retries before a consumer message is sent to the DLQ.
  * After this many failures the message is considered poison.
  */
-const DLQ_MAX_RETRIES = 3;
+export const DLQ_MAX_RETRIES = 3;
 
 
+
+
+================================================
+FILE: shared/utils/dlqHandler.js
+================================================
+/**
+ * Dead-Letter Queue (DLQ) handler for Kafka consumers.
+ *
+ * Wraps eachMessage processing with retry tracking. After DLQ_MAX_RETRIES
+ * consecutive failures the message is forwarded to a per-service DLQ topic
+ * and the consumer moves on instead of blocking forever.
+ *
+ * Usage (in any consumer):
+ *   import { withDLQ } from '../../../../shared/utils/dlqHandler.js';
+ *   await consumer.run({ eachMessage: withDLQ(producer, dlqTopic, logger, handler) });
+ */
+
+import { DLQ_MAX_RETRIES } from '../constants/constants.js';
+
+/**
+ * Minimal logger interface (works with Winston, Pino, console, etc.)
+ * @typedef {object} Logger
+ * @property {(message: string, meta?: object) => void} error
+ * @property {(message: string, meta?: object) => void} info
+ */
+
+/**
+ * Minimal Kafka message shape we actually use
+ * @typedef {object} KafkaMessage
+ * @property {Buffer | string | null} [key]
+ * @property {Buffer | string | null} [value]
+ * @property {string} offset
+ * @property {Record<string, Buffer | string | (Buffer | string)[] | undefined>} [headers]
+ */
+
+/**
+ * Minimal producer interface (only what we need)
+ * @typedef {object} KafkaProducer
+ * @property {(payload: {
+ *   topic: string,
+ *   messages: Array<{
+ *     key?: Buffer | string | null,
+ *     value?: Buffer | string | null,
+ *     headers?: Record<string, string | Buffer>
+ *   }>
+ * }) => Promise<any>} send
+ */
+
+/**
+ * @param {KafkaProducer} producer
+ * @param {string} dlqTopic
+ * @param {Logger} logger
+ * @param {(payload: {
+ *   topic: string,
+ *   partition: number,
+ *   message: KafkaMessage,
+ *   parsedValue: any
+ * }) => Promise<void>} handler
+ * @returns {(payload: {
+ *   topic: string,
+ *   partition: number,
+ *   message: KafkaMessage
+ * }) => Promise<void>}
+ */
+export function withDLQ(producer, dlqTopic, logger, handler) {
+  // In-memory retry tracker: key = `${topic}:${partition}:${offset}` â†’ attempt count
+  const retryMap = new Map();
+
+  return async ({ topic, partition, message }) => {
+    const msgKey = `${topic}:${partition}:${message.offset}`;
+    const attempt = (retryMap.get(msgKey) || 0) + 1;
+    retryMap.set(msgKey, attempt);
+
+    // Guard against null / undefined value
+    if (message.value == null) {
+      const err = new Error('Message value is null or undefined');
+      logger.error(`Null message value on ${topic}, sending to DLQ`, {
+        partition,
+        offset: message.offset,
+        error: err.message,
+      });
+      await sendToDLQ(producer, dlqTopic, topic, partition, message, err, logger);
+      retryMap.delete(msgKey);
+      return;
+    }
+
+    let parsedValue;
+    try {
+      parsedValue = JSON.parse(message.value.toString());
+    } catch (parseErr) {
+      // Completely unparseable â€” send to DLQ immediately
+      logger.error(`Unparseable message on ${topic}, sending to DLQ`, {
+        partition,
+        offset: message.offset,
+        error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+      });
+      await sendToDLQ(producer, dlqTopic, topic, partition, message, parseErr, logger);
+      retryMap.delete(msgKey);
+      return;
+    }
+
+    try {
+      await handler({ topic, partition, message, parsedValue });
+      // Success â€” clean up
+      retryMap.delete(msgKey);
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+
+      logger.error(`Error processing ${topic} (attempt ${attempt}/${DLQ_MAX_RETRIES})`, {
+        error: errMsg,
+        partition,
+        offset: message.offset,
+      });
+
+      if (attempt >= DLQ_MAX_RETRIES) {
+        logger.error(`Max retries exceeded for ${topic}, sending to DLQ`, {
+          partition,
+          offset: message.offset,
+        });
+        await sendToDLQ(producer, dlqTopic, topic, partition, message, error, logger);
+        retryMap.delete(msgKey);
+      } else {
+        // Re-throw so KafkaJS retries (it will re-deliver the same message)
+        throw error;
+      }
+    }
+  };
+}
+
+/**
+ * @param {KafkaProducer} producer
+ * @param {string} dlqTopic
+ * @param {string} originalTopic
+ * @param {number} partition
+ * @param {KafkaMessage} message
+ * @param {unknown} error
+ * @param {Logger} logger
+ */
+export async function sendToDLQ(producer, dlqTopic, originalTopic, partition, message, error, logger) {
+  try {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    /** @type {Record<string, string | Buffer>} */
+    const headers = {
+      ...(message.headers || {}),
+      'dlq-original-topic': originalTopic,
+      'dlq-original-partition': String(partition),
+      'dlq-original-offset': message.offset,
+      'dlq-error': errorMessage,
+      'dlq-timestamp': new Date().toISOString(),
+    };
+
+    await producer.send({
+      topic: dlqTopic,
+      messages: [
+        {
+          key: message.key ?? null,
+          value: message.value ?? null,
+          headers,
+        },
+      ],
+    });
+
+    logger.info(`Message sent to DLQ: ${dlqTopic}`, {
+      originalTopic,
+      partition,
+      offset: message.offset,
+    });
+  } catch (dlqError) {
+    // If even the DLQ publish fails, log and move on â€” don't block the consumer forever
+    logger.error(`Failed to send message to DLQ ${dlqTopic}`, {
+      error: dlqError instanceof Error ? dlqError.message : String(dlqError),
+      originalTopic,
+      partition,
+      offset: message.offset,
+    });
+  }
+}
 
 
 ================================================

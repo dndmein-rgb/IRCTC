@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js","../shared/constants/constants.js"]
+}

@@ -54,3 +54,11 @@ export const createRoute = asyncHandler(async (req, res) => {
     data: route,
   });
 });
+
+export const getAllTrains = asyncHandler(async(req,res) => {
+  const trains = await trainService.getAllTrains();
+  return res.status(200).json({
+            success: true,
+            data: trains
+       })
+})

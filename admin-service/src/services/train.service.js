@@ -63,6 +63,23 @@ export const getTrainById = async (id) => {
        return train;
 }
 
+export const getAllTrains = async () => {
+  return prisma.train.findMany({
+           include: {
+                seats: { orderBy: { seatNumber: 'asc' } },
+                route: {
+                     include: {
+                          routeStations: {
+                               include: { station: true },
+                               orderBy: { sequenceNumber: 'asc' },
+                          },
+                     },
+                },
+           },
+           orderBy: { trainNumber: 'asc' },
+      });
+}
+
 export const createRoute = async (data) => {
   const { trainId, stations } = data;
 
@@ -127,3 +144,5 @@ export const createRoute = async (data) => {
   await adminProducer.publishRouteCreated({ ...route, train: trainWithSeats });
   return route;
 };
+
+
