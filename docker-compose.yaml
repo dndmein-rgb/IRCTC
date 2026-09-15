@@ -129,7 +129,7 @@ volumes:
   zookeeper_data:
   zookeeper_logs:
   kafka_data:
-  # es_data:
+  es_data:
 
 networks:
   irctc-network:

@@ -345,7 +345,6 @@ export const resolveStation = async (input) => {
   }
 
   // 2. Try completion suggester (handles typos like "dehli" → "Delhi")
-  // 2. Try completion suggester
   try {
     const suggestResult = await esClient.search({
       index: STATION_INDEX,

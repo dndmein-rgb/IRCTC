@@ -1,7 +1,8 @@
-import { connectProducer, consumer } from "../../config/kafka.js";
+import { connectProducer, consumer, producer } from "../../config/kafka.js";
 import { logger } from "../../config/logger.js";
 import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js"
-import {withDLQ}  from "../../../../shared/utils/dlqHandler.js"
+import { withDLQ } from "../../../../shared/utils/dlqHandler.js"
+import * as  searchService from "../../services/search.service.js"
 
 class SearchConsumer {
      async start() {
@@ -21,7 +22,7 @@ class SearchConsumer {
           });
 
           await consumer.run({
-               eachMessage: withDLQ(producer, KAFKA_TOPICS.DLQ_SEARCH, logger, async ({ topic, partition, message, parsedValue }) => {
+               eachMessage: withDLQ(/** @type {any} */(producer), KAFKA_TOPICS.DLQ_SEARCH, logger, async ({ topic, partition, message, parsedValue }) => {
                     logger.info(`Processing ${topic}`, { partition, offset: message.offset });
 
                     switch (topic) {
