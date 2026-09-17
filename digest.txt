@@ -65,6 +65,42 @@ Directory structure:
     │       │   └── proxy.js
     │       └── utils/
     │           └── error.js
+    ├── inventory-service/
+    │   ├── jsconfig.json
+    │   ├── package.json
+    │   ├── prisma.config.ts
+    │   ├── .env.example
+    │   ├── prisma/
+    │   │   ├── schema.prisma
+    │   │   └── migrations/
+    │   │       ├── migration_lock.toml
+    │   │       └── 20260915165625_init/
+    │   │           └── migration.sql
+    │   └── src/
+    │       ├── index.js
+    │       ├── config/
+    │       │   ├── index.js
+    │       │   ├── kafka.js
+    │       │   ├── logger.js
+    │       │   └── prisma.js
+    │       ├── kafka/
+    │       │   ├── consumer/
+    │       │   │   └── inventory.consumer.js
+    │       │   └── producer/
+    │       │       └── inventory.producer.js
+    │       ├── middlewares/
+    │       │   ├── cors.middleware.js
+    │       │   ├── error.middleware.js
+    │       │   ├── getUserContext.js
+    │       │   ├── internalAuth.middleware.js
+    │       │   └── req.middleware.js
+    │       ├── routes/
+    │       │   └── inventory.route.js
+    │       ├── services/
+    │       │   └── inventory.service.js
+    │       └── utils/
+    │           ├── asyncHandler.js
+    │           └── error.js
     ├── notification-service/
     │   ├── jsconfig.json
     │   ├── package.json
@@ -294,7 +330,7 @@ volumes:
   zookeeper_data:
   zookeeper_logs:
   kafka_data:
-  # es_data:
+  es_data:
 
 networks:
   irctc-network:
@@ -2915,6 +2951,1098 @@ export class GatewayTimeoutError extends AppError {
 
 
 ================================================
+FILE: inventory-service/jsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "checkJs": true,
+    "noImplicitAny": false
+  },
+  "include": ["**/*.js", "../shared/constants/constants.js"]
+}
+
+
+
+================================================
+FILE: inventory-service/package.json
+================================================
+{
+  "name": "inventory-service",
+  "version": "1.0.0",
+  "description": "Source of truth for seat availability and inventory management",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "db:migrate": "npx prisma migrate dev --name init",
+    "db:generate": "npx prisma generate"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.4.1",
+    "@prisma/client": "^7.4.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.19.0",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "prisma": "^7.4.1"
+  }
+}
+
+
+================================================
+FILE: inventory-service/prisma.config.ts
+================================================
+import "dotenv/config";
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  migrations: {
+    path: "prisma/migrations",
+  },
+  datasource: {
+    url: process.env["DATABASE_URL"],
+  },
+});
+
+
+================================================
+FILE: inventory-service/.env.example
+================================================
+PORT=4007
+NODE_ENV=development
+LOG_LEVEL=info
+
+DATABASE_URL=postgres://admin:your-password@localhost:5432/inventory_service_database
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000
+
+KAFKA_BROKER=localhost:9093
+KAFKA_CLIENT_ID=inventory-service
+
+LOCK_TTL_SECONDS=300
+LOCK_EXPIRY_INTERVAL_MS=60000
+
+INTERNAL_SERVICE_KEY=your-internal-service-key
+
+
+================================================
+FILE: inventory-service/prisma/schema.prisma
+================================================
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SeatStatus {
+  AVAILABLE
+  LOCKED
+  BOOKED
+  CANCELLED
+}
+
+model ScheduleInventory {
+  id            String   @id @default(uuid())
+  scheduleId    String   @unique
+  trainId       String
+  trainNumber   String
+  trainName     String
+  departureDate DateTime @db.Date
+  totalSeats    Int
+  available     Int
+  locked        Int      @default(0)
+  booked        Int      @default(0)
+  status        String   @default("ACTIVE")
+  version       Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  seats SeatInventory[]
+
+  @@index([trainId])
+  @@index([scheduleId, status])
+  @@index([departureDate])
+  @@map("schedule_inventories")
+}
+
+model SeatInventory {
+  id                  String     @id @default(uuid())
+  scheduleInventoryId String
+  scheduleId          String
+  seatId              String
+  seatNumber          Int
+  seatType            String
+  price               Float
+  status              SeatStatus @default(AVAILABLE)
+  lockedBy            String?
+  lockedAt            DateTime?
+  lockExpiresAt       DateTime?
+  bookingId           String?
+  version             Int        @default(0)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  scheduleInventory ScheduleInventory @relation(fields: [scheduleInventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([scheduleId, seatId])
+  @@unique([scheduleId, seatNumber])
+  @@index([scheduleId, status])
+  @@index([lockExpiresAt, status])
+  @@index([bookingId])
+  @@map("seat_inventories")
+}
+
+// --- SEGMENT BOOKING: Route topology per schedule ---
+// Stores the ordered list of stations for each schedule, populated from SCHEDULE_CREATED event.
+// Used to resolve station IDs to sequence numbers for segment overlap checks.
+model RouteStop {
+  id             String @id @default(uuid())
+  scheduleId     String
+  stationId      String
+  stationName    String
+  stationCode    String
+  sequenceNumber Int
+
+  @@unique([scheduleId, stationId])
+  @@unique([scheduleId, sequenceNumber])
+  @@index([scheduleId])
+  @@map("route_stops")
+}
+
+// --- SEGMENT BOOKING: Per-segment seat lock/booking tracking ---
+// Each row represents a seat locked or booked for a specific segment [fromSeq, toSeq).
+// Two segments overlap if: a.fromSeq < b.toSeq AND b.fromSeq < a.toSeq
+model SeatSegmentLock {
+  id            String     @id @default(uuid())
+  scheduleId    String
+  seatId        String
+  fromSeq       Int        // sequenceNumber of boarding station
+  toSeq         Int        // sequenceNumber of alighting station
+  status        SeatStatus @default(LOCKED)
+  lockedBy      String?
+  lockedAt      DateTime?
+  lockExpiresAt DateTime?
+  bookingId     String?
+  version       Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([scheduleId, seatId])
+  @@index([scheduleId, seatId, status])
+  @@index([lockExpiresAt, status])
+  @@index([bookingId])
+  @@map("seat_segment_locks")
+}
+
+model IdempotencyRecord {
+  id          String   @id @default(uuid())
+  eventKey    String   @unique
+  processedAt DateTime @default(now())
+
+  @@index([eventKey])
+  @@map("idempotency_records")
+}
+
+
+================================================
+FILE: inventory-service/prisma/migrations/migration_lock.toml
+================================================
+# Please do not edit this file manually
+# It should be added in your version-control system (e.g., Git)
+provider = "postgresql"
+
+
+
+================================================
+FILE: inventory-service/prisma/migrations/20260915165625_init/migration.sql
+================================================
+-- CreateEnum
+CREATE TYPE "SeatStatus" AS ENUM ('AVAILABLE', 'LOCKED', 'BOOKED', 'CANCELLED');
+
+-- CreateTable
+CREATE TABLE "schedule_inventories" (
+    "id" TEXT NOT NULL,
+    "scheduleId" TEXT NOT NULL,
+    "trainId" TEXT NOT NULL,
+    "trainNumber" TEXT NOT NULL,
+    "trainName" TEXT NOT NULL,
+    "departureDate" DATE NOT NULL,
+    "totalSeats" INTEGER NOT NULL,
+    "available" INTEGER NOT NULL,
+    "locked" INTEGER NOT NULL DEFAULT 0,
+    "booked" INTEGER NOT NULL DEFAULT 0,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "version" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "schedule_inventories_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "seat_inventories" (
+    "id" TEXT NOT NULL,
+    "scheduleInventoryId" TEXT NOT NULL,
+    "scheduleId" TEXT NOT NULL,
+    "seatId" TEXT NOT NULL,
+    "seatNumber" INTEGER NOT NULL,
+    "seatType" TEXT NOT NULL,
+    "price" DOUBLE PRECISION NOT NULL,
+    "status" "SeatStatus" NOT NULL DEFAULT 'AVAILABLE',
+    "lockedBy" TEXT,
+    "lockedAt" TIMESTAMP(3),
+    "lockExpiresAt" TIMESTAMP(3),
+    "bookingId" TEXT,
+    "version" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "seat_inventories_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "route_stops" (
+    "id" TEXT NOT NULL,
+    "scheduleId" TEXT NOT NULL,
+    "stationId" TEXT NOT NULL,
+    "stationName" TEXT NOT NULL,
+    "stationCode" TEXT NOT NULL,
+    "sequenceNumber" INTEGER NOT NULL,
+
+    CONSTRAINT "route_stops_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "seat_segment_locks" (
+    "id" TEXT NOT NULL,
+    "scheduleId" TEXT NOT NULL,
+    "seatId" TEXT NOT NULL,
+    "fromSeq" INTEGER NOT NULL,
+    "toSeq" INTEGER NOT NULL,
+    "status" "SeatStatus" NOT NULL DEFAULT 'LOCKED',
+    "lockedBy" TEXT,
+    "lockedAt" TIMESTAMP(3),
+    "lockExpiresAt" TIMESTAMP(3),
+    "bookingId" TEXT,
+    "version" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "seat_segment_locks_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "idempotency_records" (
+    "id" TEXT NOT NULL,
+    "eventKey" TEXT NOT NULL,
+    "processedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "idempotency_records_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "schedule_inventories_scheduleId_key" ON "schedule_inventories"("scheduleId");
+
+-- CreateIndex
+CREATE INDEX "schedule_inventories_trainId_idx" ON "schedule_inventories"("trainId");
+
+-- CreateIndex
+CREATE INDEX "schedule_inventories_scheduleId_status_idx" ON "schedule_inventories"("scheduleId", "status");
+
+-- CreateIndex
+CREATE INDEX "schedule_inventories_departureDate_idx" ON "schedule_inventories"("departureDate");
+
+-- CreateIndex
+CREATE INDEX "seat_inventories_scheduleId_status_idx" ON "seat_inventories"("scheduleId", "status");
+
+-- CreateIndex
+CREATE INDEX "seat_inventories_lockExpiresAt_status_idx" ON "seat_inventories"("lockExpiresAt", "status");
+
+-- CreateIndex
+CREATE INDEX "seat_inventories_bookingId_idx" ON "seat_inventories"("bookingId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "seat_inventories_scheduleId_seatId_key" ON "seat_inventories"("scheduleId", "seatId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "seat_inventories_scheduleId_seatNumber_key" ON "seat_inventories"("scheduleId", "seatNumber");
+
+-- CreateIndex
+CREATE INDEX "route_stops_scheduleId_idx" ON "route_stops"("scheduleId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "route_stops_scheduleId_stationId_key" ON "route_stops"("scheduleId", "stationId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "route_stops_scheduleId_sequenceNumber_key" ON "route_stops"("scheduleId", "sequenceNumber");
+
+-- CreateIndex
+CREATE INDEX "seat_segment_locks_scheduleId_seatId_idx" ON "seat_segment_locks"("scheduleId", "seatId");
+
+-- CreateIndex
+CREATE INDEX "seat_segment_locks_scheduleId_seatId_status_idx" ON "seat_segment_locks"("scheduleId", "seatId", "status");
+
+-- CreateIndex
+CREATE INDEX "seat_segment_locks_lockExpiresAt_status_idx" ON "seat_segment_locks"("lockExpiresAt", "status");
+
+-- CreateIndex
+CREATE INDEX "seat_segment_locks_bookingId_idx" ON "seat_segment_locks"("bookingId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "idempotency_records_eventKey_key" ON "idempotency_records"("eventKey");
+
+-- CreateIndex
+CREATE INDEX "idempotency_records_eventKey_idx" ON "idempotency_records"("eventKey");
+
+-- AddForeignKey
+ALTER TABLE "seat_inventories" ADD CONSTRAINT "seat_inventories_scheduleInventoryId_fkey" FOREIGN KEY ("scheduleInventoryId") REFERENCES "schedule_inventories"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+
+================================================
+FILE: inventory-service/src/index.js
+================================================
+import "dotenv/config";
+import express from "express";
+import { corsMiddleware } from "./middlewares/cors.middleware.js";
+import helmet from "helmet";
+import { reqLogger } from "./middlewares/req.middleware.js";
+import cookieParser from "cookie-parser";
+import prisma from "./config/prisma.js";
+import {logger} from "./config/logger.js";
+import { errorHandler } from "./middlewares/error.middleware.js";
+import inventoryRoutes from "./routes/inventory.route.js";
+import { inventoryConsumer } from "./kafka/consumer/inventory.consumer.js";
+import { config } from "./config/index.js";
+import { disconnectAll } from "./config/kafka.js";
+
+const app = express();
+
+app.use(corsMiddleware);
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+app.use(reqLogger);
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+app.get("/", (req, res) => {
+  res.send("Hello from inventory-service");
+});
+
+// Health check
+app.get("/health", async (req, res) => {
+  let dbHealthy = false;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbHealthy = true;
+  } catch (e) {
+    logger.error("Health check: DB unreachable", {
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+
+  res.status(dbHealthy ? 200 : 503).json({
+    success: dbHealthy,
+    message: dbHealthy
+      ? "Inventory Service is healthy"
+      : "Inventory Service is degraded",
+    database: dbHealthy,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// API Routes
+app.use(inventoryRoutes);
+
+// Error handler
+app.use(errorHandler);
+
+const startServer = async () => {
+  try {
+    await inventoryConsumer.start();
+    // startLockExpiryJob();
+
+    const server = app.listen(config.PORT, () => {
+      logger.info(`${config.SERVICE_NAME} is running on port ${config.PORT}`);
+    });
+
+    // Graceful shutdown
+    const shutdown = async () => {
+      logger.info("Shutting down gracefully...");
+      // stopLockExpiryJob();
+
+      server.close(async () => {
+        await disconnectAll();
+        logger.info("Server closed");
+        process.exit(0);
+      });
+    };
+
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+  } catch (error) {
+    logger.error("Failed to start server", error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+
+
+================================================
+FILE: inventory-service/src/config/index.js
+================================================
+import packageJson from "../../package.json" with { type: "json" };
+export const config = {
+     PORT: Number(process.env.PORT) || 4007,
+     SERVICE_NAME: packageJson.name,
+     NODE_ENV: process.env.NODE_ENV || 'development',
+     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+     KAFKA_BROKER: process.env.KAFKA_BROKER,
+     KAFKA_CLIENT_ID: process.env.KAFKA_CLIENT_ID,
+     DATABASE_URL: process.env.DATABASE_URL,
+     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+     LOCK_TTL_SECONDS: parseInt(process.env.LOCK_TTL_SECONDS || '300', 10),
+     LOCK_EXPIRY_INTERVAL_MS: parseInt(process.env.LOCK_EXPIRY_INTERVAL_MS || '60000', 10),
+     INTERNAL_SERVICE_KEY: process.env.INTERNAL_SERVICE_KEY,
+}
+
+
+
+================================================
+FILE: inventory-service/src/config/kafka.js
+================================================
+import { Kafka, logLevel } from "kafkajs";
+import { config } from "./index.js";
+import {logger} from "./logger.js";
+
+
+export const kafka = new Kafka({
+     clientId: config.KAFKA_CLIENT_ID,
+     brokers: [config.KAFKA_BROKER || 'localhost:9093'],
+     logLevel: logLevel.ERROR,
+     retry: {
+          initialRetryTime: 300,
+          retries: 8,
+          maxRetryTime: 30000,
+     },
+});
+
+// Producer (for publishing SEAT_AVAILABILITY_UPDATED)
+export const producer = kafka.producer({
+     allowAutoTopicCreation: true,
+     transactionTimeout: 30000,
+     idempotent: true,
+     maxInFlightRequests: 5,
+     retry: {
+          retries: 5,
+     },
+});
+
+let isProducerConnected = false;
+
+export const connectProducer = async () => {
+     if (!isProducerConnected) {
+          await producer.connect();
+          isProducerConnected = true;
+          logger.info('Kafka producer connected');
+     }
+};
+
+export const disconnectProducer = async () => {
+     if (isProducerConnected) {
+          await producer.disconnect();
+          isProducerConnected = false;
+          logger.info('Kafka producer disconnected');
+     }
+};
+
+// Consumer (for SCHEDULE_CREATED, SCHEDULE_CANCELLED)
+export const consumer = kafka.consumer({
+     groupId: 'inventory-service-group',
+     sessionTimeout: 30000,
+     heartbeatInterval: 3000,
+});
+
+export const disconnectConsumer = async () => {
+     await consumer.disconnect();
+     logger.info('Kafka consumer disconnected');
+};
+
+export const disconnectAll = async () => {
+     await disconnectProducer();
+     await disconnectConsumer();
+};
+
+
+
+
+================================================
+FILE: inventory-service/src/config/logger.js
+================================================
+import winston from "winston"
+import { config } from "./index.js";
+
+export const logger = winston.createLogger({
+  level: config.LOG_LEVEL,
+  defaultMeta: { service: config.SERVICE_NAME },
+    format: winston.format.combine(
+      winston.format.timestamp(),
+      winston.format.printf(({level, message, timestamp, service}) =>{
+        return `[${timestamp}] [${level}] [${service}]: ${message}`
+      })
+  ),
+    transports:[new winston.transports.Console()]
+})
+
+
+
+================================================
+FILE: inventory-service/src/config/prisma.js
+================================================
+import { PrismaPg } from "@prisma/adapter-pg";
+import { config } from "./index.js";
+import  {PrismaClient}  from "@prisma/client";
+
+const connectionString = config.DATABASE_URL;
+
+const globalForPrisma = global
+if (!globalForPrisma.prisma) {
+  const adapter = new PrismaPg({ connectionString })
+
+  globalForPrisma.prisma = new PrismaClient({
+    adapter,
+    log:['error','warn']
+  })
+}
+const prisma = globalForPrisma.prisma
+
+export default prisma
+
+
+================================================
+FILE: inventory-service/src/kafka/consumer/inventory.consumer.js
+================================================
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+import { withDLQ } from "../../../../shared/utils/dlqHandler.js";
+import { connectProducer, consumer, producer } from "../../config/kafka.js";
+import {logger} from "../../config/logger.js";
+import * as  inventoryService  from "../../services/inventory.service.js";
+
+
+class InventoryConsumer {
+     async start() {
+          await consumer.connect();
+          await connectProducer(); // needed for DLQ publishing
+          logger.info('Inventory consumer connected');
+
+          await consumer.subscribe({
+               topics: [
+                    KAFKA_TOPICS.SCHEDULE_CREATED,
+                    KAFKA_TOPICS.SCHEDULE_CANCELLED,
+               ],
+               fromBeginning: true,
+          });
+
+          await consumer.run({
+               eachMessage: withDLQ(/** @type {any} */(producer), KAFKA_TOPICS.DLQ_INVENTORY, logger, async ({ topic, partition, message, parsedValue }) => {
+                    logger.info(`Processing ${topic}`, {
+                         partition,
+                         offset: message.offset,
+                    });
+
+                    switch (topic) {
+                         case KAFKA_TOPICS.SCHEDULE_CREATED:
+                              await inventoryService.initializeInventory(parsedValue);
+                              break;
+
+                         case KAFKA_TOPICS.SCHEDULE_CANCELLED:
+                              await inventoryService.cancelScheduleInventory(parsedValue);
+                              break;
+
+                         default:
+                              logger.warn(`Unhandled topic: ${topic}`);
+                    }
+               }),
+          });
+
+          logger.info('Inventory consumer running...');
+     }
+}
+
+export const inventoryConsumer = new InventoryConsumer();
+
+
+================================================
+FILE: inventory-service/src/kafka/producer/inventory.producer.js
+================================================
+import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
+import { connectProducer, producer } from "../../config/kafka.js";
+import {logger} from "../../config/logger.js";
+
+
+const MAX_PUBLISH_RETRIES = 3;
+const RETRY_DELAY_MS = 500;
+
+class InventoryProducer {
+     constructor() { this.isInitialized = false; }
+
+     async initialize() {
+          if (!this.isInitialized) {
+               await connectProducer();
+               this.isInitialized = true;
+          }
+     }
+
+     /**
+      * Send a message with retries. Availability updates are important for
+      * keeping search results accurate â€” retry before giving up.
+      */
+     async sendMessage(topic, key, value) {
+          await this.initialize();
+
+          let lastError;
+          for (let attempt = 1; attempt <= MAX_PUBLISH_RETRIES; attempt++) {
+               try {
+                    const result = await producer.send({
+                         topic,
+                         messages: [{
+                              key: key || `${topic}-${Date.now()}`,
+                              value: JSON.stringify(value),
+                              timestamp: Date.now().toString(),
+                         }],
+                    });
+                    logger.info(`Message sent to topic: ${topic}`, {
+                         key,
+                         partition: result[0].partition,
+                         offset: result[0].offset,
+                    });
+                    return result;
+               } catch (error) {
+                    lastError = error;
+                    logger.error(`Failed to send message to ${topic} (attempt ${attempt}/${MAX_PUBLISH_RETRIES})`, {
+                         error:error instanceof Error? error.message:String(error),
+                         key,
+                    });
+                    if (attempt < MAX_PUBLISH_RETRIES) {
+                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
+                    }
+               }
+          }
+
+          logger.error(`All ${MAX_PUBLISH_RETRIES} publish attempts failed for ${topic}`, { key });
+          throw lastError;
+     }
+
+     async publishSeatAvailabilityUpdated(scheduleId, trainId, available, locked, booked) {
+          return this.sendMessage(
+               KAFKA_TOPICS.SEAT_AVAILABILITY_UPDATED,
+               `schedule-${scheduleId}`,
+               { scheduleId, trainId, available, locked, booked }
+          );
+     }
+}
+
+export const inventoryProducer = new InventoryProducer();
+
+
+================================================
+FILE: inventory-service/src/middlewares/cors.middleware.js
+================================================
+import cors from "cors"
+import { config } from "../config/index.js";
+
+const allowedOrigins = config.ALLOWED_ORIGINS ? config.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : []
+
+export const corsMiddleware = cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) {
+      callback(null,true)
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+       allowedHeaders: ['Content-Type', 'Authorization'],
+})
+
+
+
+
+================================================
+FILE: inventory-service/src/middlewares/error.middleware.js
+================================================
+import { config } from "../config/index.js";
+import {logger} from "../config/logger.js";
+import { AppError } from "../utils/error.js";
+
+export const errorHandler = (err, req, res, next) => {
+  // Always log the full error internally
+  logger.error({
+    message: err?.message || "Unknown error",
+    stack: err?.stack,
+    code: err?.code,
+    path: req.path,
+    method: req.method,
+    // optional: userId if you attach it later
+  });
+
+  if (err instanceof AppError) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: err.code,
+      message: err.message,
+    });
+  }
+
+  // Prisma known errors (optional but useful)
+  if (err.code === "P2002") {
+    // Unique constraint violation
+    return res.status(409).json({
+      success: false,
+      error: "CONFLICT",
+      message: "Resource already exists",
+    });
+  }
+
+  if (err.code === "P2025") {
+    // Record not found
+    return res.status(404).json({
+      success: false,
+      error: "NOT_FOUND",
+      message: "Resource not found",
+    });
+  }
+
+  // Unexpected errors
+  const isDev = config.NODE_ENV === "development";
+
+  return res.status(500).json({
+    success: false,
+    error: "SERVER_ERROR",
+    message: isDev ? err.message : "Internal Server Error",
+    ...(isDev && { stack: err.stack }),
+  });
+};
+
+
+
+================================================
+FILE: inventory-service/src/middlewares/getUserContext.js
+================================================
+import { UnauthorizedError } from "../utils/error.js";
+
+export const  getUserContext=(req, res, next)=> {
+     const userId = req.headers['x-user-id'];
+
+     if (!userId) {
+          return next(
+               new UnauthorizedError('User context missing - must come through gateway')
+          );
+     }
+
+     req.user = { id: userId };
+     next();
+}
+
+
+
+
+================================================
+FILE: inventory-service/src/middlewares/internalAuth.middleware.js
+================================================
+import { config } from "../config/index.js";
+import { ForbiddenError } from "../utils/error.js";
+
+
+/**
+ * Validates that the request comes from an internal service
+ * by checking the x-internal-service-key header.
+ */
+export const internalAuth = (req, res, next) => {
+     const serviceKey = req.headers['x-internal-service-key'];
+
+     if (!serviceKey || serviceKey !== config.INTERNAL_SERVICE_KEY) {
+          throw new ForbiddenError('Invalid or missing internal service key');
+     }
+
+     next();
+};
+
+
+
+================================================
+FILE: inventory-service/src/middlewares/req.middleware.js
+================================================
+import {logger} from "../config/logger.js";
+
+export const reqLogger = (req, res, next) => {
+  logger.debug(`[${req.method}] ${req.originalUrl}`);
+  const start = Date.now()
+
+  res.on('finish', () => {
+           const duration = Date.now() - start;
+           logger.info(
+                `[${req.method}] ${req.originalUrl} - status: ${res.statusCode} - ${duration}ms`
+           );
+      });
+
+  next();
+   
+}
+
+
+================================================
+FILE: inventory-service/src/routes/inventory.route.js
+================================================
+import express from 'express'
+import { config } from '../config/index.js';
+import { getUserContext } from '../middlewares/getUserContext.js';
+
+
+const router = express.Router();
+
+// Allows either user context (from gateway) or internal service key (from booking-service)
+function userOrInternal(req, res, next) {
+     const serviceKey = req.headers['x-internal-service-key'];
+     if (serviceKey && serviceKey === config.INTERNAL_SERVICE_KEY) {
+          req.user = { id: 'internal-service' };
+          return next();
+     }
+     return getUserContext(req, res, next);
+}
+
+// Public: aggregate availability (used by search results)
+// router.get('/schedules/:scheduleId/availability', getScheduleAvailability);
+
+// Authenticated OR internal: individual seat statuses
+// router.get('/schedules/:scheduleId/seats', userOrInternal, getScheduleSeats);
+
+// Internal: called by booking-service (protected by service key)
+// router.post('/seats/lock', internalAuth, lockSeats);
+// router.post('/seats/unlock', internalAuth, unlockSeats);
+// router.post('/seats/confirm', internalAuth, confirmSeats);
+// router.post('/seats/cancel-booking', internalAuth, cancelBooking);
+
+export default router
+
+
+================================================
+FILE: inventory-service/src/services/inventory.service.js
+================================================
+import {logger} from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { inventoryProducer } from "../kafka/producer/inventory.producer.js";
+
+export const initializeInventory  = async (eventData) => {
+  const { scheduleId, trainId, trainNumber, trainName, departureDate, seats } =
+    eventData;
+  if (!scheduleId || !seats || !seats.length) {
+    logger.warn("Invalid SCHEDULE_CREATED event â€” missing scheduleId or seats");
+    return;
+  }
+  const eventKey = `SCHEDULE_CREATED:${scheduleId}`;
+  const existing = await prisma.idempotencyRecord.findUnique({
+    where: { eventKey },
+  });
+
+  if (existing) {
+    logger.info(`Duplicate event skipped: ${eventKey}`);
+    return;
+  }
+  const totalSeats = seats.length;
+  await prisma.$transaction(async (tx) => {
+    const schedule = await tx.scheduleInventory.create({
+      data: {
+        scheduleId,
+        trainId,
+        trainNumber,
+        trainName,
+        departureDate: new Date(departureDate),
+        totalSeats,
+        available: totalSeats,
+        locked: 0,
+        booked: 0,
+        status: "ACTIVE",
+      },
+    });
+
+    const seatData = seats.map((seat) => ({
+      scheduleInventoryId: schedule.id,
+      scheduleId,
+      seatId: seat.seatId,
+      seatNumber: seat.seatNumber,
+      seatType: seat.seatType,
+      price: seat.price,
+      status: "AVAILABLE",
+    }));
+    await tx.seatInventory.createMany({ data: seatData });
+
+    // --- SEGMENT BOOKING: Persist route topology for segment overlap checks ---
+    if (eventData.route && eventData.route.length > 0) {
+      const routeStopData = eventData.route.map((rs) => ({
+        scheduleId,
+        stationId: rs.stationId,
+        stationName: rs.stationName,
+        stationCode: rs.stationCode,
+        sequenceNumber: rs.sequenceNumber,
+      }));
+      await tx.routeStop.createMany({ data: routeStopData });
+      logger.info(
+        `Persisted ${routeStopData.length} route stops for schedule ${scheduleId}`,
+      );
+    }
+
+    await tx.idempotencyRecord.create({ data: { eventKey } });
+  });
+  logger.info(`Inventory initialized for schedule ${scheduleId} with ${totalSeats} seats`);
+  
+       try {
+            await inventoryProducer.publishSeatAvailabilityUpdated(scheduleId, trainId, totalSeats, 0, 0);
+       } catch (err) {
+            logger.error('Failed to publish initial availability event after retries', { scheduleId, error: err instanceof Error?err.message:String(err) });
+       }
+};
+
+export const cancelScheduleInventory = async (eventData) => {
+     const data = eventData.data || eventData;
+     const scheduleId = data.scheduleId || data.id;
+
+     if (!scheduleId) {
+          logger.warn('Invalid SCHEDULE_CANCELLED event â€” missing scheduleId');
+          return;
+     }
+
+     const eventKey = `SCHEDULE_CANCELLED:${scheduleId}`;
+
+     const existing = await prisma.idempotencyRecord.findUnique({ where: { eventKey } });
+     if (existing) {
+          logger.info(`Duplicate event skipped: ${eventKey}`);
+          return;
+     }
+
+     const schedule = await prisma.scheduleInventory.findUnique({ where: { scheduleId } });
+     if (!schedule) {
+          logger.warn(`Schedule ${scheduleId} not found in inventory â€” skipping cancellation`);
+          return;
+     }
+
+     await prisma.$transaction(async (tx) => {
+          await tx.scheduleInventory.update({
+               where: { scheduleId },
+               data: { status: 'CANCELLED', available: 0, locked: 0, booked: 0, version: { increment: 1 } },
+          });
+
+          await tx.seatInventory.updateMany({
+               where: { scheduleId },
+               data: { status: 'CANCELLED' },
+          });
+
+          await tx.idempotencyRecord.create({ data: { eventKey } });
+     });
+
+     logger.info(`Inventory cancelled for schedule ${scheduleId}`);
+
+     try {
+          await inventoryProducer.publishSeatAvailabilityUpdated(scheduleId, schedule.trainId, 0, 0, 0);
+     } catch (err) {
+          logger.error('Failed to publish cancellation availability event after retries', { scheduleId, error:err instanceof Error? err.message:String(err) });
+     }
+};
+
+
+
+
+================================================
+FILE: inventory-service/src/utils/asyncHandler.js
+================================================
+export const asyncHandler = (fn) => (req, res, next) => {
+  Promise.resolve(fn(req, res, next)).catch(next);
+};
+
+
+
+================================================
+FILE: inventory-service/src/utils/error.js
+================================================
+export class AppError extends Error {
+     constructor(message, statusCode, code) {
+          super(message);
+          this.statusCode = statusCode;
+          this.code = code; // custom error code
+          Error.captureStackTrace(this, this.constructor);
+     }
+}
+
+export class BadRequestError extends AppError {
+     constructor(message, code = 'BAD_REQUEST') {
+          super(message, 400, code);
+     }
+}
+
+export class UnauthorizedError extends AppError {
+     constructor(message, code = 'UNAUTHORIZED') {
+          super(message, 401, code);
+     }
+}
+
+export class ForbiddenError extends AppError {
+     constructor(message, code = 'FORBIDDEN') {
+          super(message, 403, code);
+     }
+}
+
+export class NotFoundError extends AppError {
+     constructor(message, code = 'NOT_FOUND') {
+          super(message, 404, code);
+     }
+}
+
+export class ConflictError extends AppError {
+     constructor(message, code = 'CONFLICT') {
+          super(message, 409, code);
+     }
+}
+
+export class TooManyRequestsError extends AppError {
+     constructor(message, code = 'TOO_MANY_REQUESTS') {
+          super(message, 429, code);
+     }
+}
+
+export class InternalServerError extends AppError {
+     constructor(message = 'Internal Server Error', code = 'SERVER_ERROR') {
+          super(message, 500, code);
+     }
+}
+
+
+
+================================================
 FILE: notification-service/jsconfig.json
 ================================================
 {
@@ -4064,41 +5192,44 @@ FILE: search-service/src/controllers/search.controller.js
 ================================================
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { BadRequestError } from "../utils/error.js";
-import * as  searchService from "../services/search.service.js"
-
+import * as searchService from "../services/search.service.js";
 
 export const searchTrains = asyncHandler(async (req, res) => {
-     const { from, to, date } = req.query;
-     if (!from || !to) throw new BadRequestError('from and to station names/codes are required');
-     const results = await searchService.searchTrains(from, to, date || null);
-     res.json({ success: true, data: results });
+  const { from, to, date } = req.query;
+  if (!from || !to)
+    throw new BadRequestError("from and to station names/codes are required");
+  const results = await searchService.searchTrains(from, to, date || null);
+  res.json({ success: true, data: results });
 });
 
 export const autocomplete = asyncHandler(async (req, res) => {
-     const { q } = req.query;
-     if (!q || q.length < 2) throw new BadRequestError('Provide at least 2 characters');
-     const suggestions = await searchService.autocompleteStation(q);
-     res.json({ success: true, data: suggestions });
+  const { q } = req.query;
+  if (!q || q.length < 2)
+    throw new BadRequestError("Provide at least 2 characters");
+  const suggestions = await searchService.autocompleteStation(q);
+  res.json({ success: true, data: suggestions });
 });
 
 export const debugStations = asyncHandler(async (req, res) => {
-     const data = await searchService.getAllStations();
-     res.json({ success: true, count: data.length, data });
+  const data = await searchService.getAllStations();
+  res.json({ success: true, count: data.length, data });
 });
 
 export const debugTrains = asyncHandler(async (req, res) => {
-     const data = await searchService.getAllTrains();
-     res.json({ success: true, count: data.length, data });
+  const data = await searchService.getAllTrains();
+  res.json({ success: true, count: data.length, data });
 });
+
 
 
 ================================================
 FILE: search-service/src/kafka/consumer/search.consumer.js
 ================================================
-import { connectProducer, consumer } from "../../config/kafka.js";
+import { connectProducer, consumer, producer } from "../../config/kafka.js";
 import { logger } from "../../config/logger.js";
 import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js"
-import {withDLQ}  from "../../../../shared/utils/dlqHandler.js"
+import { withDLQ } from "../../../../shared/utils/dlqHandler.js"
+import * as  searchService from "../../services/search.service.js"
 
 class SearchConsumer {
      async start() {
@@ -4118,7 +5249,7 @@ class SearchConsumer {
           });
 
           await consumer.run({
-               eachMessage: withDLQ(producer, KAFKA_TOPICS.DLQ_SEARCH, logger, async ({ topic, partition, message, parsedValue }) => {
+               eachMessage: withDLQ(/** @type {any} */(producer), KAFKA_TOPICS.DLQ_SEARCH, logger, async ({ topic, partition, message, parsedValue }) => {
                     logger.info(`Processing ${topic}`, { partition, offset: message.offset });
 
                     switch (topic) {
@@ -4645,7 +5776,6 @@ export const resolveStation = async (input) => {
   }
 
   // 2. Try completion suggester (handles typos like "dehli" → "Delhi")
-  // 2. Try completion suggester
   try {
     const suggestResult = await esClient.search({
       index: STATION_INDEX,
@@ -4847,8 +5977,8 @@ export const KAFKA_TOPICS = {
      ROUTE_UPDATED: 'admin.route-updated',
      SCHEDULE_CANCELLED: 'admin.schedule-cancelled',
 
-     // // Inventory topics (inventory-service -> search-service)
-     // SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
+     // Inventory topics (inventory-service -> search-service)
+     SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
 
      // // Booking topics (booking-service -> notification-service)
      // BOOKING_CONFIRMED: 'booking.confirmed',
@@ -5081,7 +6211,7 @@ FILE: user-service/package.json
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "db:migrate": "npx prisma migrate dev --name init",
-      "db:generate": "npx prisma generate"
+    "db:generate": "npx prisma generate"
   },
   "keywords": [],
   "author": "",
@@ -5111,6 +6241,7 @@ FILE: user-service/package.json
     "prisma": "^7.2.0"
   }
 }
+
 
 
 ================================================
