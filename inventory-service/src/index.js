@@ -1,26 +1,38 @@
 import "dotenv/config";
+
 import express from "express";
-import { corsMiddleware } from "./middlewares/cors.middleware.js";
 import helmet from "helmet";
-import { reqLogger } from "./middlewares/req.middleware.js";
 import cookieParser from "cookie-parser";
-import prisma from "./config/prisma.js";
+
 import {logger} from "./config/logger.js";
-import { errorHandler } from "./middlewares/error.middleware.js";
-import inventoryRoutes from "./routes/inventory.route.js";
-import { inventoryConsumer } from "./kafka/consumer/inventory.consumer.js";
 import { config } from "./config/index.js";
+
+import { corsMiddleware } from "./middlewares/cors.middleware.js";
+import {errorHandler} from "./middlewares/error.middleware.js";
+import { reqLogger } from "./middlewares/req.middleware.js";
+
 import { disconnectAll } from "./config/kafka.js";
+import prisma from "./config/prisma.js";
+
+import inventoryRoutes from "./routes/inventory.route.js";
+import {inventoryConsumer} from "./kafka/consumer/inventory.consumer.js";
+
+import {
+  startLockExpiryJob,
+  stopLockExpiryJob,
+} from "./utils/lockExpiry.js";
 
 const app = express();
 
 app.use(corsMiddleware);
+
 app.use(
   helmet({
     crossOriginOpenerPolicy: false,
     crossOriginEmbedderPolicy: false,
-  }),
+  })
 );
+
 app.use(reqLogger);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -33,12 +45,13 @@ app.get("/", (req, res) => {
 // Health check
 app.get("/health", async (req, res) => {
   let dbHealthy = false;
+
   try {
     await prisma.$queryRaw`SELECT 1`;
     dbHealthy = true;
   } catch (e) {
     logger.error("Health check: DB unreachable", {
-      error: e instanceof Error ? e.message : String(e),
+      error:e instanceof Error? e.message:String(e),
     });
   }
 
@@ -61,20 +74,26 @@ app.use(errorHandler);
 const startServer = async () => {
   try {
     await inventoryConsumer.start();
-    // startLockExpiryJob();
+
+    startLockExpiryJob();
 
     const server = app.listen(config.PORT, () => {
-      logger.info(`${config.SERVICE_NAME} is running on port ${config.PORT}`);
+      logger.info(
+        `${config.SERVICE_NAME} is running on port ${config.PORT}`
+      );
     });
 
     // Graceful shutdown
     const shutdown = async () => {
       logger.info("Shutting down gracefully...");
-      // stopLockExpiryJob();
+
+      stopLockExpiryJob();
 
       server.close(async () => {
         await disconnectAll();
+
         logger.info("Server closed");
+
         process.exit(0);
       });
     };
@@ -88,3 +107,5 @@ const startServer = async () => {
 };
 
 startServer();
+
+export default app;

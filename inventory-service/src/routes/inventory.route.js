@@ -1,6 +1,8 @@
 import express from 'express'
 import { config } from '../config/index.js';
 import { getUserContext } from '../middlewares/getUserContext.js';
+import { internalAuth } from '../middlewares/internalAuth.middleware.js';
+import { cancelBooking, confirmSeats, getScheduleAvailability, getScheduleSeats, lockSeats, unlockSeats } from '../controllers/inventory.controller.js';
 
 
 const router = express.Router();
@@ -16,15 +18,15 @@ function userOrInternal(req, res, next) {
 }
 
 // Public: aggregate availability (used by search results)
-// router.get('/schedules/:scheduleId/availability', getScheduleAvailability);
+router.get('/schedules/:scheduleId/availability', getScheduleAvailability);
 
 // Authenticated OR internal: individual seat statuses
-// router.get('/schedules/:scheduleId/seats', userOrInternal, getScheduleSeats);
+router.get('/schedules/:scheduleId/seats', userOrInternal, getScheduleSeats);
 
 // Internal: called by booking-service (protected by service key)
-// router.post('/seats/lock', internalAuth, lockSeats);
-// router.post('/seats/unlock', internalAuth, unlockSeats);
-// router.post('/seats/confirm', internalAuth, confirmSeats);
-// router.post('/seats/cancel-booking', internalAuth, cancelBooking);
+router.post('/seats/lock', internalAuth, lockSeats);
+router.post('/seats/unlock', internalAuth, unlockSeats);
+router.post('/seats/confirm', internalAuth, confirmSeats);
+router.post('/seats/cancel-booking', internalAuth, cancelBooking);
 
 export default router
