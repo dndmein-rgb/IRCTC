@@ -6,10 +6,12 @@
  * Compensation: reverse order of completed steps
  */
 
-const { logger } = require("../config/logger.js");
-const { default: prisma } = require("../config/prisma.js");
-const { inventoryClient } = require("./inventoryClient.js");
-const { paymentClient } = require("./paymentClient.js");
+import { logger } from "../config/logger.js";
+import prisma from "../config/prisma.js";
+import { inventoryClient } from "./inventoryClient.js";
+import { paymentClient } from "./paymentClient.js";
+
+
 
 // ─── Forward Steps ───────────────────────────────────────────────────────────
 
