@@ -2,7 +2,7 @@ import { KAFKA_TOPICS } from "../../../../shared/constants/constants.js";
 import { withDLQ } from "../../../../shared/utils/dlqHandler.js";
 import { connectProducer, consumer, producer } from "../../config/kafka.js";
 import { logger } from "../../config/logger.js";
-
+import * as bookingService from "../../services/booking.service.js"
 
 export const start = async () => {
      await consumer.connect();

@@ -6,8 +6,8 @@ export const KAFKA_TOPICS = {
      // Notification topics (user-service -> notification-service)
      OTP_EMAIL: 'notification.otp-email',
      WELCOME_EMAIL: 'notification.welcome-email',
-     // BOOKING_EMAIL: 'notification.booking-email',
-     // PAYMENT_EMAIL: 'notification.payment-email',
+     BOOKING_EMAIL: 'notification.booking-email',
+     PAYMENT_EMAIL: 'notification.payment-email',
 
      // Admin topics (admin-service -> inventory/search)
      TRAIN_CREATED: 'admin.train-created',
@@ -23,19 +23,19 @@ export const KAFKA_TOPICS = {
      SEAT_AVAILABILITY_UPDATED: 'inventory.seat-availability-updated',
 
      // // Booking topics (booking-service -> notification-service)
-     // BOOKING_CONFIRMED: 'booking.confirmed',
-     // BOOKING_CANCELLED: 'booking.cancelled',
-     // BOOKING_FAILED: 'booking.failed',
+     BOOKING_CONFIRMED: 'booking.confirmed',
+     BOOKING_CANCELLED: 'booking.cancelled',
+     BOOKING_FAILED: 'booking.failed',
 
      // // Payment topics (payment-service -> booking-service)
-     // PAYMENT_SUCCESS: 'payment.success',
-     // PAYMENT_FAILED: 'payment.failed',
+     PAYMENT_SUCCESS: 'payment.success',
+     PAYMENT_FAILED: 'payment.failed',
 
      // // Dead-letter queues (per service — poison messages land here)
-     // DLQ_BOOKING: 'dlq.booking-service',
-     // DLQ_INVENTORY: 'dlq.inventory-service',
-     // DLQ_SEARCH: 'dlq.search-service',
-     // DLQ_NOTIFICATION: 'dlq.notification-service',
+     DLQ_BOOKING: 'dlq.booking-service',
+     DLQ_INVENTORY: 'dlq.inventory-service',
+     DLQ_SEARCH: 'dlq.search-service',
+     DLQ_NOTIFICATION: 'dlq.notification-service',
 };
 
 /**

@@ -3,6 +3,9 @@ import { logger } from "../config/logger.js";
 import prisma from "../config/prisma.js";
 import { redis } from "../config/redis.js";
 import { bookingProducer } from "../kafka/producer/booking.producer.js";
+import { compensateAll } from "../services/saga.service.js";
+import { userClient } from "../services/userClient.js";
+import { forceReleaseSeatLocks } from "./distributedLock.js";
 
 
 const fetchUserForNotification = async (userId) => {
@@ -17,7 +20,7 @@ const fetchUserForNotification = async (userId) => {
           return {};
      }
 };
-
+/** @type {NodeJS.Timeout | null} */
 let expiryInterval = null;
 
 // Redis-based leader election key. Only one instance holds this lock at a time.

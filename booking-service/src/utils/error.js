@@ -48,3 +48,8 @@ export class InternalServerError extends AppError {
           super(message, 500, code);
      }
 }
+export class StaleStateError extends ConflictError {
+     constructor(message = 'Booking state changed by another process', code = 'STALE_STATE') {
+          super(message, code);
+     }
+}
