@@ -815,3 +815,543 @@ export const cancelBooking = async (userId, bookingId) => {
     };
   }
 };
+
+// ─── Get Booking ─────────────────────────────────────────────────────────────
+
+export const getBooking = async (bookingId, userId) => {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: {
+      seats: { orderBy: { seatNumber: "asc" } },
+      passengers: true,
+    },
+  });
+
+  if (!booking || booking.userId !== userId) {
+    throw new NotFoundError("Booking not found");
+  }
+
+  return {
+    id: booking.id,
+    status: booking.status,
+    scheduleId: booking.scheduleId,
+    trainId: booking.trainId,
+    trainNumber: booking.trainNumber,
+    trainName: booking.trainName,
+    departureDate: booking.departureDate,
+    totalAmount: booking.totalAmount,
+    seatCount: booking.seatCount,
+    fromStationId: booking.fromStationId, // --- SEGMENT BOOKING
+    toStationId: booking.toStationId, // --- SEGMENT BOOKING
+    fromSeq: booking.fromSeq, // --- SEGMENT BOOKING
+    toSeq: booking.toSeq, // --- SEGMENT BOOKING
+    paymentOrderId: booking.paymentOrderId,
+    lockExpiresAt: booking.lockExpiresAt,
+    failureReason: booking.failureReason,
+    seats: booking.seats.map((s) => ({
+      seatId: s.seatId,
+      seatNumber: s.seatNumber,
+      seatType: s.seatType,
+      price: s.price,
+    })),
+    passengers: booking.passengers.map((p) => ({
+      id: p.id,
+      name: p.name,
+      age: p.age,
+      gender: p.gender,
+      seatId: p.seatId,
+    })),
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt,
+  };
+};
+
+// ─── Get User Bookings ───────────────────────────────────────────────────────
+/**
+ * @param {string} userId
+ * @param {{ status?: string, page?: number, limit?: number }} [options]
+ */
+export const getUserBookings = async (
+  userId,
+  { status, page = 1, limit = 10 } = {},
+) => {
+  const skip = (page - 1) * limit;
+  const where = { userId };
+  if (status) where.status = status.toUpperCase();
+
+  const [bookings, total] = await Promise.all([
+    prisma.booking.findMany({
+      where,
+      include: {
+        seats: { orderBy: { seatNumber: "asc" } },
+        passengers: true,
+      },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: limit,
+    }),
+    prisma.booking.count({ where }),
+  ]);
+
+  return {
+    bookings: bookings.map((b) => ({
+      id: b.id,
+      status: b.status,
+      scheduleId: b.scheduleId,
+      trainNumber: b.trainNumber,
+      trainName: b.trainName,
+      departureDate: b.departureDate,
+      totalAmount: b.totalAmount,
+      seatCount: b.seatCount,
+      fromStationId: b.fromStationId, // --- SEGMENT BOOKING
+      toStationId: b.toStationId, // --- SEGMENT BOOKING
+      fromSeq: b.fromSeq, // --- SEGMENT BOOKING
+      toSeq: b.toSeq, // --- SEGMENT BOOKING
+      seats: b.seats.map((s) => ({
+        seatId: s.seatId,
+        seatNumber: s.seatNumber,
+        seatType: s.seatType,
+        price: s.price,
+      })),
+      passengers: b.passengers.map((p) => ({
+        name: p.name,
+        age: p.age,
+        gender: p.gender,
+      })),
+      createdAt: b.createdAt,
+    })),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+};
+
+// ─── Verify Payment (client-side verification after Razorpay checkout) ───────
+
+export const verifyPayment = async (
+  bookingId,
+  userId,
+  razorpayPaymentId,
+  razorpaySignature,
+) => {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+  });
+
+  if (!booking || booking.userId !== userId) {
+    throw new NotFoundError("Booking not found");
+  }
+
+  if (!booking.paymentOrderId) {
+    throw new BadRequestError("Booking has no payment order");
+  }
+
+  if (booking.status === "CONFIRMED") {
+    return {
+      bookingId: booking.id,
+      status: "CONFIRMED",
+      message: "Already confirmed",
+    };
+  }
+
+  if (booking.status !== "PAYMENT_PENDING") {
+    // The user paid, but the booking died first (usually expiry). We refuse to
+    // capture here; if the gateway captured anyway, the payment.success consumer
+    // refunds it. Say so, rather than leaving them wondering about their money.
+    if (TERMINAL_STATUSES.includes(booking.status)) {
+      throw new ConflictError(
+        `This booking is ${booking.status.toLowerCase()} and can no longer be confirmed. ` +
+          `If your payment went through, it will be refunded automatically.`,
+        "BOOKING_NOT_PAYABLE",
+      );
+    }
+    throw new ConflictError(
+      `Booking is in ${booking.status} status, cannot verify payment`,
+    );
+  }
+
+  // Call payment service to verify and capture
+  const result = await paymentClient.verifyPayment(
+    booking.paymentOrderId,
+    razorpayPaymentId,
+    razorpaySignature,
+  );
+
+  logger.info(`Payment verified for booking ${bookingId}`, { result });
+
+  return {
+    bookingId: booking.id,
+    paymentStatus: result.status,
+  };
+};
+
+// ─── Handle Schedule Cancelled (Kafka consumer) ─────────────────────────────
+// When a schedule is cancelled, all active bookings on that schedule must be
+// failed/cancelled so users aren't left with stranded tickets.
+
+export const handleScheduleCancelled = async (scheduleId) => {
+  if (!scheduleId) {
+    logger.warn("handleScheduleCancelled called without scheduleId");
+    return;
+  }
+
+  const activeBookings = await prisma.booking.findMany({
+    where: {
+      scheduleId,
+      status: { in: ["PENDING", "SEATS_HELD", "PAYMENT_PENDING", "CONFIRMED"] },
+    },
+    include: { seats: true },
+  });
+
+  if (activeBookings.length === 0) {
+    logger.info(`No active bookings to cancel for schedule ${scheduleId}`);
+    return;
+  }
+
+  logger.info(
+    `Cancelling ${activeBookings.length} active booking(s) due to schedule cancellation`,
+    { scheduleId },
+  );
+
+  for (const booking of activeBookings) {
+    try {
+      // CAS: claim ownership of this booking transition
+      const claimed = await prisma.booking.updateMany({
+        where: {
+          id: booking.id,
+          version: booking.version,
+          status: {
+            in: ["PENDING", "SEATS_HELD", "PAYMENT_PENDING", "CONFIRMED"],
+          },
+        },
+        data: {
+          status: "CANCELLED",
+          failureReason: "schedule_cancelled",
+          version: { increment: 1 },
+        },
+      });
+
+      if (claimed.count === 0) {
+        logger.info(
+          `Booking ${booking.id} already handled, skipping schedule-cancel`,
+        );
+        continue;
+      }
+
+      const seatIds = booking.seats.map((s) => s.seatId).sort();
+
+      // Release Redis locks if any are still held
+      await forceReleaseSeatLocks(
+        booking.scheduleId,
+        seatIds,
+        booking.fromSeq,
+        booking.toSeq,
+      );
+
+      // Initiate refund for confirmed bookings that had payment
+      if (booking.status === "CONFIRMED" && booking.paymentOrderId) {
+        try {
+          const idempotencyKey = `${booking.id}-schedule-cancel-refund`;
+          await paymentClient.initiateRefund(
+            booking.paymentOrderId,
+            booking.totalAmount,
+            "schedule_cancelled",
+            idempotencyKey,
+          );
+        } catch (refundErr) {
+          logger.error(
+            `Failed to initiate refund for booking ${booking.id} during schedule cancellation`,
+            {
+              error:
+                refundErr instanceof Error
+                  ? refundErr.message
+                  : String(refundErr),
+            },
+          );
+        }
+      }
+
+      // Publish BOOKING_CANCELLED event
+      try {
+        const userInfo = await fetchUserForNotification(booking.userId);
+        await bookingProducer.publishBookingCancelled({
+          bookingId: booking.id,
+          userId: booking.userId,
+          email: userInfo.email,
+          firstName: userInfo.firstName,
+          scheduleId: booking.scheduleId,
+          reason: "schedule_cancelled",
+          refundAmount:
+            booking.status === "CONFIRMED" ? booking.totalAmount : 0,
+        });
+      } catch (err) {
+        logger.error(
+          "Failed to publish BOOKING_CANCELLED for schedule cancellation",
+          {
+            bookingId: booking.id,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+
+      logger.info(
+        `Booking ${booking.id} cancelled due to schedule cancellation`,
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to cancel booking ${booking.id} during schedule cancellation`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+};
+
+// ─── Stuck Booking Recovery ──────────────────────────────────────────────────
+// CONFIRMING and CANCELLING are transient states with no timeout. If the process
+// dies mid-saga the booking used to sit in one of them forever: the expiry job only
+// scans PENDING/SEATS_HELD/PAYMENT_PENDING, and cancelBooking treats CONFIRMING as
+// terminal and refuses to touch it. The seats stay locked, the payment stays
+// captured, and no ticket is ever issued.
+//
+// The SagaLog has always recorded exactly what we need to finish the job. This reads
+// it and resumes. Re-driving forward is safe because the inventory mutations are now
+// idempotent (see inventoryClient — every call carries a stable key).
+
+// A retried saga step writes a NEW log row, so a booking can have several rows for
+// the same step. Only the most recent one describes the current state — an older
+// COMPLETED row sitting behind a newer COMPENSATED one must not read as "still held".
+export const hasCompletedStep = async (bookingId, step) => {
+  const log = await prisma.sagaLog.findFirst({
+    where: { bookingId, step, status: { in: ["COMPLETED", "COMPENSATED"] } },
+    orderBy: { createdAt: "desc" },
+  });
+  return log?.status === "COMPLETED";
+};
+
+export const recoverConfirming = async (booking, seatIds) => {
+  // Was the inventory confirm already applied?
+  let seatsConfirmed = await hasCompletedStep(booking.id, "CONFIRM_SEATS");
+
+  if (!seatsConfirmed) {
+    // Unknown — the process may have died mid-call. Re-drive it; the operation is
+    // idempotent, so this either applies it or replays the original result.
+    try {
+      await saga.executeConfirmSeats(
+        booking,
+        seatIds,
+        booking.fromSeq,
+        booking.toSeq,
+      );
+      seatsConfirmed = true;
+    } catch (error) {
+      logger.error(
+        `Recovery: could not confirm seats for stuck booking ${booking.id}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+
+  if (seatsConfirmed) {
+    const finished = await prisma.booking.updateMany({
+      where: { id: booking.id, status: "CONFIRMING" },
+      data: { status: "CONFIRMED", version: { increment: 1 } },
+    });
+
+    if (finished.count === 0) return; // someone else finished it first
+
+    await forceReleaseSeatLocks(
+      booking.scheduleId,
+      seatIds,
+      booking.fromSeq,
+      booking.toSeq,
+    );
+
+    try {
+      const [userInfo, fromStationName, toStationName] = await Promise.all([
+        fetchUserForNotification(booking.userId),
+        fetchStationName(booking.fromStationId),
+        fetchStationName(booking.toStationId),
+      ]);
+
+      await bookingProducer.publishBookingConfirmed({
+        bookingId: booking.id,
+        userId: booking.userId,
+        email: userInfo.email,
+        firstName: userInfo.firstName,
+        scheduleId: booking.scheduleId,
+        trainNumber: booking.trainNumber,
+        trainName: booking.trainName,
+        fromStationName,
+        toStationName,
+        departureDate: booking.departureDate,
+        seats: booking.seats.map((s) => ({
+          seatNumber: s.seatNumber,
+          seatType: s.seatType,
+          price: s.price,
+        })),
+        totalAmount: booking.totalAmount,
+      });
+    } catch (err) {
+      logger.error("Recovery: failed to publish BOOKING_CONFIRMED", {
+        bookingId: booking.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    logger.info(`Recovered stuck CONFIRMING booking ${booking.id} → CONFIRMED`);
+    return;
+  }
+
+  // Could not confirm — roll the whole saga back, refunding the captured payment.
+  await saga.compensateAll(booking, seatIds);
+
+  await prisma.booking.updateMany({
+    where: { id: booking.id, status: "CONFIRMING" },
+    data: {
+      status: "FAILED",
+      failureReason: "stuck_confirming_recovered",
+      version: { increment: 1 },
+    },
+  });
+
+  await forceReleaseSeatLocks(
+    booking.scheduleId,
+    seatIds,
+    booking.fromSeq,
+    booking.toSeq,
+  );
+
+  try {
+    const userInfo = await fetchUserForNotification(booking.userId);
+    await bookingProducer.publishBookingFailed({
+      bookingId: booking.id,
+      userId: booking.userId,
+      email: userInfo.email,
+      firstName: userInfo.firstName,
+      scheduleId: booking.scheduleId,
+      reason: "confirm_seats_failed",
+    });
+  } catch (err) {
+    logger.error("Recovery: failed to publish BOOKING_FAILED", {
+      bookingId: booking.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  logger.warn(
+    `Recovered stuck CONFIRMING booking ${booking.id} → FAILED (compensated)`,
+  );
+};
+
+const recoverCancelling = async (booking, seatIds) => {
+  // The saga log tells us whether the seats were ever actually booked, which decides
+  // whether this is a cancel-a-confirmed-booking or a release-a-hold.
+  const wasConfirmed = await hasCompletedStep(booking.id, "CONFIRM_SEATS");
+  let refundInitiated = false;
+
+  try {
+    if (wasConfirmed) {
+      await inventoryClient.cancelBooking(
+        booking.scheduleId,
+        booking.id,
+        booking.userId,
+      );
+
+      if (booking.paymentOrderId) {
+        try {
+          await paymentClient.initiateRefund(
+            booking.paymentOrderId,
+            booking.totalAmount,
+            "user_cancelled",
+            `${booking.id}-cancel-refund`,
+          );
+          refundInitiated = true;
+        } catch (error) {
+          logger.error(
+            `Recovery: refund failed for stuck booking ${booking.id}`,
+            {
+              error: extractPaymentError(error).message,
+            },
+          );
+        }
+      }
+    } else {
+      await inventoryClient.releaseSeats(
+        booking.scheduleId,
+        seatIds,
+        booking.userId,
+        booking.fromSeq,
+        booking.toSeq,
+      );
+    }
+  } catch (error) {
+    // Leave it CANCELLING so the next sweep retries rather than reporting a
+    // cancellation whose seats are still held.
+    logger.error(
+      `Recovery: could not release inventory for stuck booking ${booking.id} — will retry`,
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return;
+  }
+
+  const finished = await prisma.booking.updateMany({
+    where: { id: booking.id, status: "CANCELLING" },
+    data: { status: "CANCELLED", version: { increment: 1 } },
+  });
+
+  if (finished.count === 0) return;
+
+  await forceReleaseSeatLocks(
+    booking.scheduleId,
+    seatIds,
+    booking.fromSeq,
+    booking.toSeq,
+  );
+
+  try {
+    const userInfo = await fetchUserForNotification(booking.userId);
+    await bookingProducer.publishBookingCancelled({
+      bookingId: booking.id,
+      userId: booking.userId,
+      email: userInfo.email,
+      firstName: userInfo.firstName,
+      scheduleId: booking.scheduleId,
+      reason: "user_cancelled",
+      refundAmount: refundInitiated ? booking.totalAmount : 0,
+    });
+  } catch (err) {
+    logger.error("Recovery: failed to publish BOOKING_CANCELLED", {
+      bookingId: booking.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  logger.info(`Recovered stuck CANCELLING booking ${booking.id} → CANCELLED`);
+};
+
+/**
+ * Resume a booking abandoned in a transient state.
+ * Safe to call repeatedly: every terminal write is status-guarded, so a booking
+ * another process already finished is left alone.
+ */
+export const recoverStuckBooking = async (booking) => {
+  const seatIds = booking.seats.map((s) => s.seatId).sort();
+
+  logger.warn(`Recovering booking ${booking.id} stuck in ${booking.status}`, {
+    stuckSinceMs: Date.now() - new Date(booking.updatedAt).getTime(),
+  });
+
+  if (booking.status === "CONFIRMING")
+    return recoverConfirming(booking, seatIds);
+  if (booking.status === "CANCELLING")
+    return recoverCancelling(booking, seatIds);
+};

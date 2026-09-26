@@ -16,7 +16,7 @@ import  RedisClient  from './config/redis.js';
 
 import prisma from './config/prisma.js';
 
-// import bookingRoutes from './routes/booking.route.js';
+import bookingRoutes from './routes/booking.route.js';
 import * as  bookingConsumer from './kafka/consumer/booking.consumer.js';
 
 import {
@@ -71,7 +71,7 @@ app.get('/health', async (req, res) => {
 });
 
 // API Routes
-// app.use(bookingRoutes);
+app.use(bookingRoutes);
 
 // Error handler (must be last)
 app.use(errorHandler);
