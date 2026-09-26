@@ -69,27 +69,30 @@ const fetchUserForNotification = async (userId) => {
   }
 };
 const fetchStationName = async (stationId) => {
-     if (!stationId) return null;
-     try {
-          const station = await stationClient.getStationById(stationId);
-          return station ? station.name : null;
-     } catch (/**@type{any} */ err) {
-          // A 404 here is a wiring bug, not a transient failure — the enrichment is
-          // best-effort, so it degrades silently and can go unnoticed for a long time.
-          // Log it at error level so a broken internal route is actually visible.
-          if (err.response?.status === 404) {
-               logger.error('Station lookup returned 404 — internal route may be misconfigured', {
-                    stationId,
-                    url: err.config?.url,
-               });
-          } else {
-               logger.warn('Failed to enrich booking event with station name', {
-                    stationId,
-                    error: err.message,
-               });
-          }
-          return null;
-     }
+  if (!stationId) return null;
+  try {
+    const station = await stationClient.getStationById(stationId);
+    return station ? station.name : null;
+  } catch (/**@type{any} */ err) {
+    // A 404 here is a wiring bug, not a transient failure — the enrichment is
+    // best-effort, so it degrades silently and can go unnoticed for a long time.
+    // Log it at error level so a broken internal route is actually visible.
+    if (err.response?.status === 404) {
+      logger.error(
+        "Station lookup returned 404 — internal route may be misconfigured",
+        {
+          stationId,
+          url: err.config?.url,
+        },
+      );
+    } else {
+      logger.warn("Failed to enrich booking event with station name", {
+        stationId,
+        error: err.message,
+      });
+    }
+    return null;
+  }
 };
 export const createBooking = async (
   userId,
@@ -585,64 +588,230 @@ export const handlePaymentSuccess = async (
 
 // ─── Handle Payment Failure (Kafka consumer) ─────────────────────────────────
 
-const handlePaymentFailure = async (paymentOrderId, reason) => {
-     const booking = await prisma.booking.findUnique({
-          where: { paymentOrderId },
-          include: { seats: true },
-     });
+export const handlePaymentFailure = async (paymentOrderId, reason) => {
+  const booking = await prisma.booking.findUnique({
+    where: { paymentOrderId },
+    include: { seats: true },
+  });
 
-     if (!booking) {
-          logger.warn(`No booking found for paymentOrderId: ${paymentOrderId}`);
-          return;
-     }
+  if (!booking) {
+    logger.warn(`No booking found for paymentOrderId: ${paymentOrderId}`);
+    return;
+  }
 
-     // Idempotent
-     if (booking.status === 'FAILED' || booking.status === 'CANCELLED' || booking.status === 'EXPIRED') {
-          logger.info(`Booking ${booking.id} already in terminal state: ${booking.status}`);
-          return;
-     }
+  // Idempotent
+  if (
+    booking.status === "FAILED" ||
+    booking.status === "CANCELLED" ||
+    booking.status === "EXPIRED"
+  ) {
+    logger.info(
+      `Booking ${booking.id} already in terminal state: ${booking.status}`,
+    );
+    return;
+  }
 
-     if (booking.status !== 'PAYMENT_PENDING') {
-          logger.warn(`Booking ${booking.id} in unexpected status: ${booking.status}`);
-          return;
-     }
+  if (booking.status !== "PAYMENT_PENDING") {
+    logger.warn(
+      `Booking ${booking.id} in unexpected status: ${booking.status}`,
+    );
+    return;
+  }
 
-     const seatIds = booking.seats.map(s => s.seatId).sort();
+  const seatIds = booking.seats.map((s) => s.seatId).sort();
 
-     // Atomically claim this booking before compensating
-     try {
-          await casUpdateBooking(booking.id, booking.version, {
-               status: 'FAILED',
-               failureReason: reason || 'payment_failed',
-          });
-     } catch (/**@type{any} */ error) {
-          if (error.code === 'STALE_STATE') {
-               logger.info(`Booking ${booking.id} already handled by another process, skipping`);
-               return;
-          }
-          throw error;
-     }
+  // Atomically claim this booking before compensating
+  try {
+    await casUpdateBooking(booking.id, booking.version, {
+      status: "FAILED",
+      failureReason: reason || "payment_failed",
+    });
+  } catch (/**@type{any} */ error) {
+    if (error.code === "STALE_STATE") {
+      logger.info(
+        `Booking ${booking.id} already handled by another process, skipping`,
+      );
+      return;
+    }
+    throw error;
+  }
 
-     // Compensate: release held seats
-     await saga.compensateHoldSeats(booking, seatIds);
+  // Compensate: release held seats
+  await saga.compensateHoldSeats(booking, seatIds);
 
-     // Release Redis locks (segment-aware)
-     await forceReleaseSeatLocks(booking.scheduleId, seatIds, booking.fromSeq, booking.toSeq);
+  // Release Redis locks (segment-aware)
+  await forceReleaseSeatLocks(
+    booking.scheduleId,
+    seatIds,
+    booking.fromSeq,
+    booking.toSeq,
+  );
 
-     // Publish BOOKING_FAILED
-     try {
-          const userInfo = await fetchUserForNotification(booking.userId);
-          await bookingProducer.publishBookingFailed({
-               bookingId: booking.id,
-               userId: booking.userId,
-               email: userInfo.email,
-               firstName: userInfo.firstName,
-               scheduleId: booking.scheduleId,
-               reason: reason || 'payment_failed',
-          });
-     } catch (err) {
-          logger.error('Failed to publish BOOKING_FAILED after retries', { bookingId: booking.id, error: err instanceof Error?err.message:String(err) });
-     }
+  // Publish BOOKING_FAILED
+  try {
+    const userInfo = await fetchUserForNotification(booking.userId);
+    await bookingProducer.publishBookingFailed({
+      bookingId: booking.id,
+      userId: booking.userId,
+      email: userInfo.email,
+      firstName: userInfo.firstName,
+      scheduleId: booking.scheduleId,
+      reason: reason || "payment_failed",
+    });
+  } catch (err) {
+    logger.error("Failed to publish BOOKING_FAILED after retries", {
+      bookingId: booking.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
-     logger.info(`Booking ${booking.id} failed: ${reason}`);
+  logger.info(`Booking ${booking.id} failed: ${reason}`);
+};
+
+// ─── Cancel Booking ──────────────────────────────────────────────────────────
+export const cancelBooking = async (userId, bookingId) => {
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+  });
+  if (!booking) {
+    throw new NotFoundError("Booking not found");
+  }
+
+  if (booking.userId !== userId) {
+    throw new NotFoundError("Booking not found");
+  }
+  if (
+    ["CANCELLED", "CANCELLING", "FAILED", "EXPIRED", "CONFIRMING"].includes(
+      booking.status,
+    )
+  ) {
+    throw new ConflictError(`Booking is already ${booking.status}`);
+  }
+  const seatIds = booking.seats.map((s) => s.seatId).sort();
+  let refundInitiated = false;
+  // Atomically claim this booking — prevents race with payment webhook or expiry job
+  try {
+    await casUpdateBooking(booking.id, booking.version, {
+      status: "CANCELLED",
+      reason: "user_cancelled",
+    });
+  } catch (/**@type{any}*/ error) {
+    if (error.code === "STALE_STATE") {
+      // Re-read to give user accurate error
+      const fresh = await prisma.booking.findUnique({
+        where: { id: bookingId },
+      });
+      throw new ConflictError(
+        `Booking status changed to ${fresh?.status || "unknown"} while cancelling. Please refresh.`,
+      );
+    }
+    throw error;
+  }
+  if (booking.status === "CONFIRMED") {
+    // Cancel confirmed booking: release seats + refund
+    try {
+      await inventoryClient.cancelBooking(
+        booking.scheduleId,
+        bookingId,
+        userId,
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to release seats in inventory for booking ${booking.id}`,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      // Roll back from CANCELLING to CONFIRMED so the user can retry
+      await prisma.booking.updateMany({
+        where: { id: booking.id, status: "CANCELLED" },
+        data: {
+          status: "CONFIRMED",
+          failureReason: null,
+          version: { increment: 1 },
+        },
+      });
+      throw error;
+    }
+    if (booking.paymentOrderId) {
+      try {
+        const idempotencyKey = `${booking.id}-cancel-refunc`;
+        await paymentClient.initiateRefund(
+          booking.paymentOrderId,
+          booking.total_amount,
+          "user_cancelled",
+          idempotencyKey,
+        );
+        refundInitiated = true;
+      } catch (error) {
+        logger.error(`Failed to initiate refund for booking ${booking.id}`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } else if (
+      ["PENDING", "PAYMENT_PENDING", "SEATS_HELD"].includes(booking.status)
+    ) {
+      // Release held seats.
+      //
+      // PENDING is included deliberately: the hold-seats saga step may have landed
+      // in inventory even though the booking row had not been advanced yet. It used
+      // to match neither branch, so the seats stayed LOCKED in the database until the
+      // lock-expiry job swept them up to LOCK_TTL_SECONDS later. Unlocking seats that
+      // were never held is a harmless no-op, so this is safe either way.
+      try {
+        // --- SEGMENT BOOKING: Pass segment params for accurate release ---
+        await inventoryClient.releaseSeats(
+          booking.scheduleId,
+          seatIds,
+          userId,
+          booking.fromSeq,
+          booking.toSeq,
+        );
+      } catch (error) {
+        logger.error(`Failed to release seats during cancel`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    // Final status (CANCELLING → CANCELLED)
+    await prisma.booking.updateMany({
+      where: { id: booking.id, status: "CANCELLING" },
+      data: {
+        status: "CANCELLED",
+        version: { increment: 1 },
+      },
+    });
+    // Release Redis locks (segment-aware)
+    await forceReleaseSeatLocks(
+      booking.scheduleId,
+      seatIds,
+      booking.fromSeq,
+      booking.toSeq,
+    );
+    // Publish BOOKING_CANCELLED
+    try {
+      const userInfo = await fetchUserForNotification(booking.userId);
+      await bookingProducer.publishBookingCancelled({
+        bookingId: booking.id,
+        userId: booking.userId,
+        email: userInfo.email,
+        firstName: userInfo.firstName,
+        scheduleId: booking.scheduleId,
+        reason: "user_cancelled",
+        refundAmount: refundInitiated ? booking.totalAmount : 0,
+      });
+    } catch (err) {
+      logger.error("Failed to publish BOOKING_CANCELLED after retries", {
+        bookingId: booking.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    logger.info(`Booking ${booking.id} cancelled by user ${userId}`);
+
+    return {
+      bookingId: booking.id,
+      status: "CANCELLED",
+      refundInitiated,
+    };
+  }
 };
